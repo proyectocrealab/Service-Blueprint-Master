@@ -51,38 +51,38 @@ const MentorChat: React.FC<MentorChatProps> = ({ blueprint, scenario }) => {
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
       {isOpen && (
-        <div className="mb-4 w-80 md:w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col" style={{ height: '500px' }}>
+        <div className="mb-4 w-80 md:w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col animate-in slide-in-from-bottom-5 duration-300" style={{ height: '500px' }}>
           {/* Header */}
-          <div className="bg-indigo-600 p-4 flex justify-between items-center text-white">
+          <div className="bg-indigo-600 p-4 flex justify-between items-center text-white shadow-sm">
             <div className="flex items-center gap-2">
-              <Bot size={20} />
-              <span className="font-semibold">Professor AI</span>
+              <Bot size={20} className="animate-pulse" />
+              <span className="font-semibold tracking-tight">Professor AI</span>
             </div>
-            <button onClick={() => setIsOpen(false)} className="hover:bg-indigo-700 p-1 rounded">
+            <button onClick={() => setIsOpen(false)} className="hover:bg-indigo-700 p-1.5 rounded-lg transition-colors">
               <X size={18} />
             </button>
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 bg-gray-50 flex flex-col gap-3">
+          <div className="flex-1 overflow-y-auto p-4 bg-slate-50 flex flex-col gap-3">
             {messages.map((msg) => (
               <div
                 key={msg.id}
-                className={`max-w-[85%] p-3 rounded-2xl text-sm ${
+                className={`max-w-[85%] p-3 rounded-2xl text-sm shadow-sm border ${
                   msg.sender === 'user'
-                    ? 'bg-indigo-600 text-white self-end rounded-tr-sm'
-                    : 'bg-white border border-gray-200 text-gray-800 self-start rounded-tl-sm shadow-sm'
+                    ? 'bg-indigo-600 text-white border-indigo-700 self-end rounded-tr-none'
+                    : 'bg-white border-gray-100 text-gray-800 self-start rounded-tl-none'
                 }`}
               >
                 {msg.text}
               </div>
             ))}
             {loading && (
-              <div className="bg-white border border-gray-200 p-3 rounded-2xl rounded-tl-sm self-start shadow-sm w-16 flex items-center justify-center">
+              <div className="bg-white border border-gray-100 p-3 rounded-2xl rounded-tl-none self-start shadow-sm w-16 flex items-center justify-center">
                 <div className="flex space-x-1">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                  <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
                 </div>
               </div>
             )}
@@ -90,19 +90,19 @@ const MentorChat: React.FC<MentorChatProps> = ({ blueprint, scenario }) => {
           </div>
 
           {/* Input */}
-          <div className="p-3 bg-white border-t border-gray-100 flex gap-2">
+          <div className="p-4 bg-white border-t border-gray-100 flex gap-2">
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Ask for a hint..."
-              className="flex-1 bg-gray-100 border-transparent focus:bg-white focus:border-indigo-300 focus:ring-0 rounded-xl px-4 py-2 text-sm transition-all"
+              placeholder="Ask for guidance..."
+              className="flex-1 bg-gray-50 border border-gray-200 focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 rounded-xl px-4 py-2.5 text-sm transition-all outline-none text-gray-900 placeholder:text-gray-400"
             />
             <button
               onClick={handleSend}
               disabled={loading || !input.trim()}
-              className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white p-2 rounded-xl transition-colors"
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white p-2.5 rounded-xl transition-all shadow-md hover:shadow-indigo-200 active:scale-95"
             >
               <Send size={18} />
             </button>
@@ -113,10 +113,10 @@ const MentorChat: React.FC<MentorChatProps> = ({ blueprint, scenario }) => {
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2 group"
+          className="bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2 group border-2 border-white/20"
         >
           <MessageSquare size={24} />
-          <span className="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-300 whitespace-nowrap">
+          <span className="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-300 whitespace-nowrap font-bold text-sm uppercase tracking-wider">
             Ask Mentor
           </span>
         </button>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { BlueprintColumn, LayerType, Scenario } from '../types';
+import { BlueprintColumn, LayerType, Scenario, GradingResult } from '../types';
 import { LAYER_INFO, TUTORIAL_STEPS } from '../constants';
-import { Plus, Trash2, Zap, AlertTriangle, ArrowRight, CheckCircle2, RotateCcw, Save, Pencil, X, Home, Download, Upload } from 'lucide-react';
+import { Plus, Trash2, Zap, AlertTriangle, ArrowRight, CheckCircle2, RotateCcw, Save, X, Download, Upload, ClipboardList, GripHorizontal, Move } from 'lucide-react';
 import TutorialOverlay from './TutorialOverlay';
 
 interface BlueprintBuilderProps {
@@ -16,6 +16,15 @@ interface BlueprintBuilderProps {
   onExport?: () => void;
   onImport?: () => void;
   currentSaveId?: string;
+  previousGradingResult?: GradingResult | null;
+}
+
+type DragType = 'column' | 'cell';
+
+interface DraggedItem {
+  type: DragType;
+  colIndex: number;
+  layer?: LayerType;
 }
 
 const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({ 
@@ -26,17 +35,21 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
     scenario,
     isTutorial = false,
     onTutorialComplete,
-    onBack,
     onExport,
     onImport,
-    currentSaveId
+    previousGradingResult
 }) => {
   const [tutorialStep, setTutorialStep] = useState(0);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [draggedItem, setDraggedItem] = useState<DraggedItem | null>(null);
+  const [isOverTrash, setIsOverTrash] = useState(false);
 
   // Analysis Modal State
   const [showAnalysisModal, setShowAnalysisModal] = useState(false);
   const [analysisModalData, setAnalysisModalData] = useState<{columnId: string, type: 'painPoints' | 'opportunities'} | null>(null);
   const [analysisInput, setAnalysisInput] = useState('');
+
+  const layers: LayerType[] = ['physical', 'customer', 'frontstage', 'backstage', 'support'];
 
   const updateCell = (columnId: string, layer: keyof BlueprintColumn, value: string) => {
     setBlueprint(prev => prev.map(col => 
@@ -51,35 +64,99 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
   };
 
   const addColumn = () => {
-    const newId = `col-${Date.now()}`;
-    const newColumn: BlueprintColumn = {
-        id: newId,
-        phase: `Phase ${blueprint.length + 1}`,
-        physical: '',
-        customer: '',
-        frontstage: '',
-        backstage: '',
-        support: '',
-        painPoints: [],
-        opportunities: []
-    };
-    setBlueprint([...blueprint, newColumn]);
+    setBlueprint(prev => {
+        const newId = `col-${Date.now()}`;
+        const newColumn: BlueprintColumn = {
+            id: newId,
+            phase: `Phase ${prev.length + 1}`,
+            physical: '',
+            customer: '',
+            frontstage: '',
+            backstage: '',
+            support: '',
+            painPoints: [],
+            opportunities: []
+        };
+        return [...prev, newColumn];
+    });
   };
 
-  const deleteColumn = (columnId: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleDragStart = (type: DragType, colIndex: number, layer?: LayerType) => {
+    if (isTutorial) return;
+    setDraggedItem({ type, colIndex, layer });
+  };
 
-    if (blueprint.length <= 1) {
-        alert("You must have at least one phase.");
-        return;
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (targetColIndex: number, targetLayer?: LayerType) => {
+    if (!draggedItem) return;
+
+    if (draggedItem.type === 'column' && !targetLayer) {
+        // Rearranging columns
+        if (draggedItem.colIndex === targetColIndex) {
+            setDraggedItem(null);
+            return;
+        }
+        const newBlueprint = [...blueprint];
+        const itemToMove = newBlueprint[draggedItem.colIndex];
+        newBlueprint.splice(draggedItem.colIndex, 1);
+        newBlueprint.splice(targetColIndex, 0, itemToMove);
+        setBlueprint(newBlueprint);
+    } else if (draggedItem.type === 'cell' && targetLayer && draggedItem.layer) {
+        // Swapping cell contents
+        const newBlueprint = [...blueprint];
+        const sourceCol = { ...newBlueprint[draggedItem.colIndex] };
+        const targetCol = { ...newBlueprint[targetColIndex] };
+        
+        const sourceContent = sourceCol[draggedItem.layer] as string;
+        const targetContent = targetCol[targetLayer] as string;
+
+        sourceCol[draggedItem.layer] = targetContent;
+        targetCol[targetLayer] = sourceContent;
+
+        newBlueprint[draggedItem.colIndex] = sourceCol;
+        newBlueprint[targetColIndex] = targetCol;
+        
+        setBlueprint(newBlueprint);
     }
 
-    setTimeout(() => {
-        if (window.confirm("Are you sure you want to delete this phase? This action cannot be undone.")) {
-            setBlueprint(prev => prev.filter(c => c.id !== columnId));
-        }
-    }, 10);
+    setDraggedItem(null);
+  };
+
+  const handleTrashDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsOverTrash(false);
+    if (!draggedItem) return;
+
+    if (draggedItem.type === 'column') {
+        const newBlueprint = [...blueprint];
+        const target = { ...newBlueprint[draggedItem.colIndex] };
+        
+        // Clear all content
+        target.phase = `Phase ${newBlueprint.length}`;
+        target.physical = '';
+        target.customer = '';
+        target.frontstage = '';
+        target.backstage = '';
+        target.support = '';
+        target.painPoints = [];
+        target.opportunities = [];
+        
+        // Remove from current position and move to the end
+        newBlueprint.splice(draggedItem.colIndex, 1);
+        newBlueprint.push(target);
+        setBlueprint(newBlueprint);
+    } else if (draggedItem.type === 'cell' && draggedItem.layer) {
+        setBlueprint(prev => prev.map((col, i) => {
+            if (i === draggedItem.colIndex) {
+                return { ...col, [draggedItem.layer!]: '' };
+            }
+            return col;
+        }));
+    }
+    setDraggedItem(null);
   };
 
   const openAnalysisModal = (columnId: string, type: 'painPoints' | 'opportunities') => {
@@ -117,7 +194,7 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
   };
 
   const handleReset = () => {
-    if (window.confirm("Are you sure you want to clear the entire blueprint? All your work on this mission will be lost.")) {
+    if (window.confirm("Are you sure you want to clear the entire blueprint?")) {
       const initialBlueprint: BlueprintColumn[] = scenario.initialPhases.map((phase, index) => ({
         id: `col-${index}`,
         phase,
@@ -135,26 +212,11 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
 
   const handleSaveClick = () => {
     const defaultName = `${scenario.title} - ${new Date().toLocaleString()}`;
-    // If we have an existing save ID, hint that we are updating, but still allow rename
     const name = prompt("Name your blueprint save:", defaultName);
     if (name) {
       onSave(name);
     }
   };
-
-  const layers: LayerType[] = ['physical', 'customer', 'frontstage', 'backstage', 'support'];
-
-  const totalCells = blueprint.length * 5;
-  const filledCells = blueprint.reduce((acc, col) => {
-    let count = 0;
-    if (col.physical.trim()) count++;
-    if (col.customer.trim()) count++;
-    if (col.frontstage.trim()) count++;
-    if (col.backstage.trim()) count++;
-    if (col.support.trim()) count++;
-    return acc + count;
-  }, 0);
-  const progress = Math.round((filledCells / totalCells) * 100);
 
   const activeTutorialLayer = isTutorial ? TUTORIAL_STEPS[tutorialStep].targetLayer : null;
   
@@ -178,291 +240,218 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
         </>
       )}
 
-      {/* Analysis Input Modal */}
-      {showAnalysisModal && analysisModalData && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative animate-in zoom-in-95 duration-200">
-                <button onClick={() => setShowAnalysisModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
-                    <X size={24} />
-                </button>
-                
-                <div className="mb-4">
-                    <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${analysisModalData.type === 'painPoints' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                        {analysisModalData.type === 'painPoints' ? <AlertTriangle size={24} /> : <Zap size={24} />}
-                    </div>
-                    <h2 className="text-xl font-bold text-gray-900">
-                        Add {analysisModalData.type === 'painPoints' ? 'Pain Point' : 'Opportunity'}
-                    </h2>
-                    <p className="text-gray-500 text-sm mt-1">
-                        {analysisModalData.type === 'painPoints' 
-                            ? "Describe a problem or friction point for the customer here." 
-                            : "Describe an idea to improve the service experience here."}
-                    </p>
-                </div>
-
-                <textarea 
-                    className={`w-full p-3 border rounded-xl focus:ring-2 outline-none h-24 resize-none ${
-                        analysisModalData.type === 'painPoints' 
-                        ? 'border-red-200 focus:ring-red-500 focus:border-red-500' 
-                        : 'border-green-200 focus:ring-green-500 focus:border-green-500'
-                    }`}
-                    placeholder="Type your observation..."
-                    value={analysisInput}
-                    onChange={(e) => setAnalysisInput(e.target.value)}
-                    autoFocus
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleSaveAnalysis();
-                        }
-                    }}
-                />
-
-                <button 
-                    onClick={handleSaveAnalysis}
-                    disabled={!analysisInput.trim()}
-                    className={`w-full mt-4 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all text-white ${
-                        analysisModalData.type === 'painPoints'
-                        ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-300'
-                        : 'bg-green-600 hover:bg-green-700 disabled:bg-green-300'
-                    }`}
-                >
-                    Add Observation <ArrowRight size={18} />
-                </button>
-             </div>
+      {/* Floating Trashcan */}
+      {!isTutorial && (
+        <div 
+          onDragOver={(e) => { e.preventDefault(); setIsOverTrash(true); }}
+          onDragLeave={() => setIsOverTrash(false)}
+          onDrop={handleTrashDrop}
+          className={`fixed bottom-24 right-8 z-[100] w-20 h-20 rounded-full border-4 flex items-center justify-center transition-all duration-300 shadow-xl ${
+            isOverTrash 
+              ? 'bg-red-500 border-red-600 scale-125 text-white' 
+              : 'bg-white border-blue-400 text-blue-500 hover:scale-110'
+          } ${draggedItem ? 'animate-pulse' : 'scale-100 opacity-60 hover:opacity-100'}`}
+        >
+          <div className="relative">
+            <Trash2 size={40} className={isOverTrash ? 'animate-bounce' : ''} />
+            {isOverTrash && (
+              <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded whitespace-nowrap">
+                {draggedItem?.type === 'column' ? 'Clear & Move Column' : 'Delete Content'}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       {/* Top Bar */}
-      <div className={`bg-white border-b px-6 py-4 flex justify-between items-center shadow-sm sticky top-0 z-30 ${isTutorial && activeTutorialLayer !== 'header' ? 'z-30' : 'z-50'}`}>
-        <div>
-          <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-            {scenario.title}
-            {currentSaveId && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full border border-green-200 font-normal">Saved</span>}
-          </h2>
-          <p className="text-sm text-gray-500">Service Blueprint Mission</p>
+      <div className={`bg-white border-b px-8 py-4 flex justify-between items-center shadow-sm sticky top-0 z-30 ${isTutorial && activeTutorialLayer !== 'header' ? 'z-30' : 'z-50'}`}>
+        <div className="flex items-center gap-5">
+          <div>
+            <div className="flex items-center gap-2">
+                <h2 className="text-2xl font-black text-gray-900 tracking-tight">
+                {scenario.title}
+                </h2>
+                {previousGradingResult && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200 font-black uppercase tracking-widest">Remediation</span>}
+            </div>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-0.5">Service Blueprint Mission</p>
+          </div>
+          {previousGradingResult && (
+            <button 
+                onClick={() => setShowFeedback(true)}
+                className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-indigo-200 hover:scale-105 transition-transform"
+            >
+                <ClipboardList size={16} /> Tasks ({previousGradingResult.weaknesses.length})
+            </button>
+          )}
         </div>
         
         {!isTutorial && (
-            <div className="flex items-center gap-6">
-            <div className="flex flex-col items-end min-w-[200px] hidden xl:flex">
-                <div className="flex justify-between w-full mb-1">
-                <span className="text-xs font-semibold uppercase text-gray-400">Mission Progress</span>
-                <span className="text-xs text-indigo-600 font-bold">{progress}%</span>
+            <div className="flex items-center gap-8">
+                <div className="flex gap-4">
+                    <button onClick={handleReset} className="text-gray-400 hover:text-indigo-600 transition-colors" title="Clear Blueprint"><RotateCcw size={22} /></button>
+                    {onImport && <button onClick={onImport} className="text-gray-400 hover:text-indigo-600 transition-colors" title="Import"><Upload size={22} /></button>}
+                    {onExport && <button onClick={onExport} className="text-gray-400 hover:text-indigo-600 transition-colors" title="Export"><Download size={22} /></button>}
+                    <button onClick={handleSaveClick} className="text-gray-400 hover:text-indigo-600 transition-colors" title="Save Progress"><Save size={22} /></button>
                 </div>
-                <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                <div 
-                    className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-500 ease-out rounded-full"
-                    style={{ width: `${progress}%` }}
-                ></div>
-                </div>
-            </div>
-            
-            <div className="h-8 w-px bg-gray-200 mx-2 hidden lg:block"></div>
-
-            <div className="flex gap-2">
-                <button 
-                    onClick={handleReset}
-                    className="text-gray-400 hover:text-red-500 hover:bg-red-50 px-3 py-2 rounded-lg transition-all flex items-center gap-2 group"
-                    title="Clear Blueprint"
-                >
-                    <RotateCcw size={18} />
-                </button>
-
-                {onImport && (
-                  <button 
-                      onClick={onImport}
-                      className="text-gray-400 hover:text-blue-500 hover:bg-blue-50 px-3 py-2 rounded-lg transition-all flex items-center gap-2 group"
-                      title="Import / Append Data"
-                  >
-                      <Upload size={18} />
-                  </button>
-                )}
-
-                {onExport && (
-                  <button 
-                      onClick={onExport}
-                      className="text-gray-400 hover:text-blue-500 hover:bg-blue-50 px-3 py-2 rounded-lg transition-all flex items-center gap-2 group"
-                      title="Export Backup (JSON)"
-                  >
-                      <Download size={18} />
-                  </button>
-                )}
 
                 <button 
-                    onClick={handleSaveClick}
-                    className="text-gray-400 hover:text-blue-500 hover:bg-blue-50 px-3 py-2 rounded-lg transition-all flex items-center gap-2 group"
-                    title="Save Progress"
+                    onClick={onComplete}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-2xl font-black shadow-xl shadow-indigo-100 transition-all flex items-center gap-3 active:scale-95 text-lg"
                 >
-                    <Save size={18} />
-                    <span className="text-sm font-medium hidden lg:inline">Save</span>
+                    {previousGradingResult ? 'Re-Submit' : 'Submit Mission'} <ArrowRight size={22} />
                 </button>
-                
-                {onBack && (
-                  <button 
-                      onClick={onBack}
-                      className="text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 px-3 py-2 rounded-lg transition-all flex items-center gap-2 group"
-                      title="Back to Dashboard"
-                  >
-                      <Home size={18} />
-                      <span className="text-sm font-medium hidden lg:inline">Dashboard</span>
-                  </button>
-                )}
-            </div>
-
-            <button 
-                onClick={onComplete}
-                disabled={progress < 10} // Minimum effort required
-                className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-xl font-semibold shadow-md hover:shadow-lg transition-all flex items-center gap-2 transform active:scale-95"
-            >
-                Submit <span className="hidden lg:inline">for Grading</span> <ArrowRight size={18} />
-            </button>
             </div>
         )}
       </div>
       
-      {/* Scrollable Workspace */}
-      <div className={`flex-1 overflow-auto bg-slate-100/50 p-8 blueprint-scroll ${isTutorial ? 'overflow-hidden' : ''}`}>
-         <div className="min-w-max flex justify-center"> {/* Centered for tutorial view usually */}
-            <div className="flex gap-6">
-                
-                {/* Fixed Left Column: Headers */}
-                <div className="w-56 pt-14 flex flex-col gap-6 sticky left-0 z-20">
+      <div className={`flex-1 overflow-auto bg-slate-50 p-10 blueprint-scroll ${isTutorial ? 'overflow-hidden' : ''}`}>
+         <div className="min-w-max flex justify-center">
+            <div className="flex gap-8">
+                <div className="w-64 flex flex-col gap-8 pt-2 sticky left-0 z-20">
+                    <div className="bg-slate-900 h-[84px] p-5 rounded-3xl shadow-xl border border-slate-800 flex items-center justify-center">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Blueprint Layers</span>
+                    </div>
+
                     {layers.map(layer => (
-                        <div key={layer} className={`h-40 p-4 rounded-xl shadow-sm border-l-4 flex flex-col justify-center ${LAYER_INFO[layer].color} transition-transform ${getHighlightClass('')} ${isTutorial ? 'opacity-90' : 'hover:scale-[1.02]'}`}>
-                            <h3 className="font-bold text-sm uppercase tracking-wider">{LAYER_INFO[layer].label}</h3>
-                            <p className="text-xs mt-2 opacity-70 leading-relaxed">{LAYER_INFO[layer].description}</p>
+                        <div key={layer} className={`h-40 p-6 rounded-3xl shadow-md border-l-8 flex flex-col justify-center ${LAYER_INFO[layer].color} transition-all border-slate-200/50 ${getHighlightClass('')}`}>
+                            <h3 className="font-black text-sm uppercase tracking-widest">{LAYER_INFO[layer].label}</h3>
+                            <p className="text-[11px] mt-3 opacity-80 leading-relaxed font-medium">{LAYER_INFO[layer].description}</p>
                         </div>
                     ))}
-                     {/* Analysis Header */}
-                    <div className={`h-auto min-h-[160px] p-4 rounded-xl bg-gradient-to-br from-indigo-50 to-white border-l-4 border-indigo-500 shadow-sm flex flex-col justify-center ${getHighlightClass('')} ${isTutorial ? 'opacity-90' : ''}`}>
-                        <h3 className="font-bold text-sm uppercase tracking-wider text-indigo-900">Analysis</h3>
-                        <p className="text-xs mt-2 text-indigo-700 leading-relaxed">Identify <span className="font-bold text-red-500">Pain Points</span> & <span className="font-bold text-green-600">Opportunities</span></p>
+                    <div className={`min-h-[160px] p-6 rounded-3xl bg-indigo-50 border-l-8 border-indigo-500 shadow-md flex flex-col justify-center ${getHighlightClass('')}`}>
+                        <h3 className="font-black text-sm uppercase tracking-[0.2em] text-indigo-900">Analysis</h3>
+                        <div className="mt-5 flex flex-col gap-3">
+                            <span className="text-[11px] font-bold text-red-600 flex items-center gap-2 uppercase tracking-widest"><AlertTriangle size={12}/> Pain Points</span>
+                            <span className="text-[11px] font-bold text-green-600 flex items-center gap-2 uppercase tracking-widest"><Zap size={12}/> Opportunities</span>
+                        </div>
                     </div>
                 </div>
 
-                {/* Scrollable Columns: Phases */}
-                {blueprint.map((column, colIndex) => (
-                    <div key={column.id} className="w-72 flex flex-col gap-6 pt-2">
-                        {/* Phase Header - Redesigned for Visibility */}
-                        <div className={`flex items-center gap-2 bg-slate-800 p-2 rounded-xl shadow-md border border-slate-700 relative group/header ${getHighlightClass('phase')}`}>
-                            <div className="absolute -left-3 -top-3 w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm border-4 border-slate-50 shadow-sm z-10">
-                                {colIndex + 1}
-                            </div>
-                            
-                            <div className="flex-1 pl-3">
-                                <input 
-                                    type="text" 
-                                    value={column.phase}
-                                    onChange={(e) => updatePhaseName(column.id, e.target.value)}
-                                    className="w-full bg-transparent border-none focus:ring-0 text-white font-bold text-center placeholder-slate-500 hover:bg-slate-700/50 rounded px-2 py-1 transition-colors"
-                                    placeholder="Phase Name"
-                                    title="Click to rename phase"
-                                    readOnly={isTutorial}
-                                />
-                            </div>
-                            
-                            {!isTutorial && (
-                                <button 
-                                    onClick={(e) => deleteColumn(column.id, e)}
-                                    className="p-2 text-slate-400 hover:text-white hover:bg-red-600 rounded-lg transition-all cursor-pointer z-20"
-                                    title="Delete Phase"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
-                            )}
-                        </div>
+                {blueprint.map((column, colIndex) => {
+                    const colFilled = layers.filter(l => (column[l] as string).trim()).length;
+                    const colPercent = (colFilled / layers.length) * 100;
+                    const isDraggingCol = draggedItem?.type === 'column' && draggedItem.colIndex === colIndex;
 
-                        {/* Cells */}
-                        {layers.map(layer => (
-                            <div key={`${column.id}-${layer}`} className={`h-40 relative group perspective-1000 ${getHighlightClass(layer)}`}>
-                                <textarea
-                                    className={`w-full h-full p-4 text-sm rounded-xl border-2 resize-none shadow-sm transition-all duration-200 focus:ring-4 focus:ring-indigo-100 focus:outline-none
-                                        ${column[layer] 
-                                          ? 'bg-white border-gray-200 text-gray-800' 
-                                          : 'bg-white/50 border-dashed border-gray-300 hover:bg-white hover:border-indigo-300 text-gray-500'
-                                        }
-                                    `}
-                                    placeholder={`${LAYER_INFO[layer].label}...`}
-                                    value={column[layer] as string}
-                                    onChange={(e) => updateCell(column.id, layer, e.target.value)}
-                                    readOnly={isTutorial && activeTutorialLayer !== layer}
-                                />
-                                {column[layer] && (
-                                  <div className="absolute top-2 right-2 text-green-500 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                    <CheckCircle2 size={16} />
-                                  </div>
-                                )}
-                            </div>
-                        ))}
-
-                        {/* Analysis Cell */}
-                        <div className={`min-h-[160px] bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex flex-col gap-3 hover:shadow-md transition-shadow ${getHighlightClass('analysis')}`}>
-                            {/* Pain Points */}
-                            <div className="flex-1">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="text-xs font-bold text-red-600 flex items-center gap-1.5 uppercase tracking-wide"><AlertTriangle size={12}/> Pain Points</span>
-                                    <button 
-                                      onClick={() => openAnalysisModal(column.id, 'painPoints')} 
-                                      className="w-5 h-5 flex items-center justify-center rounded bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-700 transition-colors"
-                                    >
-                                      <Plus size={14}/>
-                                    </button>
-                                </div>
-                                <div className="flex flex-col gap-2">
-                                    {column.painPoints.map((pp, i) => (
-                                        <div key={i} className="text-xs bg-red-50 text-red-800 p-2 rounded-lg border border-red-100 flex justify-between items-start group/item animate-fadeIn">
-                                            <span className="leading-tight">{pp}</span>
-                                            <button onClick={() => handleRemoveAnalysis(column.id, 'painPoints', i)} className="opacity-0 group-hover/item:opacity-100 text-red-400 hover:text-red-700 ml-1 mt-0.5"><Trash2 size={12}/></button>
-                                        </div>
-                                    ))}
-                                    {column.painPoints.length === 0 && <div className="text-xs text-gray-300 italic py-1">No pain points identified</div>}
-                                </div>
-                            </div>
-
-                            <hr className="border-gray-100 border-dashed"/>
-
-                            {/* Opportunities */}
-                            <div className="flex-1">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="text-xs font-bold text-green-600 flex items-center gap-1.5 uppercase tracking-wide"><Zap size={12}/> Opportunities</span>
-                                    <button 
-                                      onClick={() => openAnalysisModal(column.id, 'opportunities')} 
-                                      className="w-5 h-5 flex items-center justify-center rounded bg-green-50 text-green-500 hover:bg-green-100 hover:text-green-700 transition-colors"
-                                    >
-                                      <Plus size={14}/>
-                                    </button>
-                                </div>
-                                 <div className="flex flex-col gap-2">
-                                    {column.opportunities.map((opp, i) => (
-                                        <div key={i} className="text-xs bg-green-50 text-green-800 p-2 rounded-lg border border-green-100 flex justify-between items-start group/item animate-fadeIn">
-                                            <span className="leading-tight">{opp}</span>
-                                            <button onClick={() => handleRemoveAnalysis(column.id, 'opportunities', i)} className="opacity-0 group-hover/item:opacity-100 text-green-400 hover:text-green-700 ml-1 mt-0.5"><Trash2 size={12}/></button>
-                                        </div>
-                                    ))}
-                                     {column.opportunities.length === 0 && <div className="text-xs text-gray-300 italic py-1">No opportunities identified</div>}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                ))}
-
-                {/* Add Phase Column Button */}
-                {!isTutorial && (
-                    <div className="w-24 pt-2 flex flex-col items-center">
-                        <button 
-                            onClick={addColumn}
-                            className="h-10 w-full flex items-center justify-center bg-gray-200 text-gray-500 hover:bg-indigo-100 hover:text-indigo-600 rounded-full border-2 border-dashed border-gray-300 hover:border-indigo-400 transition-all group mb-6"
-                            title="Add New Phase"
+                    return (
+                        <div 
+                          key={column.id} 
+                          className={`w-80 flex flex-col gap-8 pt-2 transition-all duration-300 ${isDraggingCol ? 'opacity-40 scale-95' : 'opacity-100'}`}
                         >
-                            <Plus size={20} />
-                        </button>
-                        <div className="flex-1 w-0.5 bg-gray-200 border-l border-dashed border-gray-300 h-full mx-auto"></div>
-                    </div>
-                )}
+                            <div 
+                              draggable={!isTutorial}
+                              onDragStart={() => handleDragStart('column', colIndex)}
+                              onDragOver={handleDragOver}
+                              onDrop={() => handleDrop(colIndex)}
+                              className={`flex flex-col h-[84px] bg-slate-900 p-4 rounded-3xl shadow-xl border border-slate-800 relative group/phase cursor-grab active:cursor-grabbing ${getHighlightClass('phase')} ${isDraggingCol ? 'ring-4 ring-indigo-500' : ''}`}
+                            >
+                                <div className="absolute -left-3 -top-3 w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white font-black text-base border-4 border-slate-50 shadow-lg z-10">{colIndex + 1}</div>
+                                <div className="absolute right-4 top-4 opacity-0 group-hover/phase:opacity-100 transition-opacity text-slate-500 pointer-events-none">
+                                  <GripHorizontal size={18} />
+                                </div>
+                                <div className="flex items-center gap-2 w-full pr-6 pt-1">
+                                    <input 
+                                        type="text" 
+                                        value={column.phase} 
+                                        onChange={(e) => updatePhaseName(column.id, e.target.value)} 
+                                        className="w-full bg-transparent border-none focus:ring-0 text-white font-black text-center text-base truncate" 
+                                        placeholder="Phase Name" 
+                                        readOnly={isTutorial} 
+                                        draggable="false"
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                    />
+                                </div>
+                                <div className="mt-auto w-full flex flex-col gap-1 px-1">
+                                    <div className="flex justify-between items-center text-[9px] text-slate-500 font-black uppercase tracking-widest">
+                                        <span>Completion</span>
+                                        <span className={colPercent === 100 ? 'text-green-400' : 'text-indigo-400'}>{Math.round(colPercent)}%</span>
+                                    </div>
+                                    <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                                        <div 
+                                            className={`h-full transition-all duration-700 ease-out ${colPercent === 100 ? 'bg-green-500 shadow-[0_0_12px_rgba(34,197,94,0.4)]' : 'bg-indigo-600'}`} 
+                                            style={{ width: `${colPercent}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
 
-                {/* Spacer for right padding */}
-                <div className="w-12"></div>
+                            {layers.map(layer => (
+                                <div 
+                                    key={`${column.id}-${layer}`} 
+                                    className={`h-40 relative group ${getHighlightClass(layer)}`}
+                                    onDragOver={handleDragOver}
+                                    onDrop={() => handleDrop(colIndex, layer)}
+                                >
+                                    <div 
+                                        className={`w-full h-full p-6 text-sm font-medium rounded-3xl border-2 resize-none shadow-sm transition-all focus-within:ring-8 focus-within:ring-indigo-50 bg-white text-gray-900 border-slate-100 group-hover:border-indigo-200 relative ${
+                                            draggedItem?.type === 'cell' && draggedItem.colIndex === colIndex && draggedItem.layer === layer 
+                                                ? 'opacity-40' 
+                                                : ''
+                                        }`}
+                                    >
+                                        <textarea
+                                            className="w-full h-full bg-transparent border-none focus:ring-0 outline-none placeholder:text-slate-300"
+                                            placeholder={`${LAYER_INFO[layer].label}...`}
+                                            value={column[layer] as string}
+                                            onChange={(e) => updateCell(column.id, layer, e.target.value)}
+                                            readOnly={isTutorial && activeTutorialLayer !== layer}
+                                        />
+                                        
+                                        {!isTutorial && (
+                                            <div 
+                                                draggable
+                                                onDragStart={(e) => {
+                                                    e.stopPropagation();
+                                                    handleDragStart('cell', colIndex, layer);
+                                                }}
+                                                className="absolute top-4 right-4 cursor-grab active:cursor-grabbing p-1.5 rounded-lg bg-slate-50 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-indigo-600 hover:bg-indigo-50"
+                                                title="Drag to swap or delete"
+                                            >
+                                                <Move size={16} />
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+
+                            {/* Analysis Section */}
+                            <div className={`min-h-[160px] bg-white rounded-3xl border-2 border-slate-100 p-5 shadow-sm flex flex-col gap-4 ${getHighlightClass('analysis')}`}>
+                                <div className="flex-1">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <span className="text-[11px] font-black text-red-600 flex items-center gap-2 uppercase tracking-widest"><AlertTriangle size={14}/> Pain Points</span>
+                                        <button onClick={() => openAnalysisModal(column.id, 'painPoints')} className="w-6 h-6 flex items-center justify-center rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors"><Plus size={16}/></button>
+                                    </div>
+                                    <div className="flex flex-col gap-2">
+                                        {column.painPoints.map((pp, i) => (
+                                            <div key={i} className="text-[11px] font-medium bg-red-50 text-red-800 p-2.5 rounded-xl border border-red-100 flex justify-between items-start group/item shadow-sm">
+                                                <span>{pp}</span>
+                                                <button onClick={() => handleRemoveAnalysis(column.id, 'painPoints', i)} className="opacity-0 group-hover/item:opacity-100 text-red-400 p-0.5 hover:text-red-600 transition-all"><Trash2 size={14}/></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <hr className="border-slate-100 border-dashed"/>
+                                <div className="flex-1">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <span className="text-[11px] font-black text-green-600 flex items-center gap-2 uppercase tracking-widest"><Zap size={14}/> Opportunities</span>
+                                        <button onClick={() => openAnalysisModal(column.id, 'opportunities')} className="w-6 h-6 flex items-center justify-center rounded-lg bg-green-50 text-green-500 hover:bg-green-100 transition-colors"><Plus size={16}/></button>
+                                    </div>
+                                     <div className="flex flex-col gap-3">
+                                        {column.opportunities.map((opp, i) => (
+                                            <div key={i} className="text-[11px] font-medium bg-green-50 text-green-800 p-2.5 rounded-xl border border-green-100 flex justify-between items-start group/item shadow-sm">
+                                                <span>{opp}</span>
+                                                <button onClick={() => handleRemoveAnalysis(column.id, 'opportunities', i)} className="opacity-0 group-hover/item:opacity-100 text-red-400 p-0.5 hover:text-red-600 transition-all"><Trash2 size={14}/></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+
+                {!isTutorial && (
+                    <button onClick={addColumn} className="h-14 w-14 flex items-center justify-center bg-white text-indigo-600 rounded-full border-2 border-dashed border-slate-300 hover:border-indigo-500 hover:bg-indigo-50 transition-all mt-6 shrink-0 shadow-sm active:scale-95 group"><Plus size={28} className="group-hover:rotate-90 transition-transform" /></button>
+                )}
             </div>
          </div>
       </div>

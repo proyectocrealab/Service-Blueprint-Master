@@ -28,6 +28,7 @@ export interface GradingResult {
   strengths: string[];
   weaknesses: string[];
   tips: string[];
+  isRemediation?: boolean;
 }
 
 export interface ChatMessage {
