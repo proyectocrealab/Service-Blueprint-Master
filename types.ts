@@ -1,3 +1,4 @@
+
 export type LayerType = 'physical' | 'customer' | 'frontstage' | 'backstage' | 'support';
 
 export interface BlueprintColumn {
@@ -21,6 +22,14 @@ export interface Scenario {
   context: string; // Context for the AI to understand the scenario
 }
 
+export interface SavedBlueprint {
+  id: string;
+  name: string;
+  scenario: Scenario;
+  blueprint: BlueprintColumn[];
+  lastModified: number;
+}
+
 export interface GradingResult {
   score: number;
   letterGrade: string;
@@ -31,18 +40,11 @@ export interface GradingResult {
   isRemediation?: boolean;
 }
 
+// Added ChatMessage interface to support MentorChat component
 export interface ChatMessage {
   id: string;
-  sender: 'user' | 'ai';
+  sender: 'ai' | 'user';
   text: string;
-}
-
-export interface SavedBlueprint {
-  id: string;
-  name: string;
-  scenarioId: string;
-  blueprint: BlueprintColumn[];
-  lastModified: number;
 }
 
 export enum AppStage {

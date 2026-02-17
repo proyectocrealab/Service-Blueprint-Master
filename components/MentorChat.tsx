@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, X, MessageSquare } from 'lucide-react';
 import { getMentorAdvice } from '../services/geminiService';
@@ -33,7 +34,6 @@ const MentorChat: React.FC<MentorChatProps> = ({ blueprint, scenario }) => {
     setMessages(updatedMessages);
     setLoading(true);
 
-    // Format history for Gemini
     const history = updatedMessages.map(m => ({
       role: (m.sender === 'user' ? 'user' : 'model') as 'user' | 'model',
       parts: [{ text: m.text }] as [{ text: string }]

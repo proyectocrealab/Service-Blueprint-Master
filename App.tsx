@@ -1,95 +1,130 @@
-
-import React, { useState, useEffect, useRef } from 'react';
-import { AppStage, BlueprintColumn, GradingResult, Scenario, SavedBlueprint, LayerType } from './types';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { AppStage, BlueprintColumn, GradingResult, Scenario } from './types';
 import { SCENARIOS, EXAMPLE_BLUEPRINT, TUTORIAL_SCENARIO, LAYER_INFO } from './constants';
 import { gradeBlueprint } from './services/geminiService';
-import { getSavedBlueprints, saveBlueprint, deleteBlueprint } from './services/storageService';
 import BlueprintBuilder from './components/BlueprintBuilder';
-import MentorChat from './components/MentorChat';
-import { ArrowRight, RefreshCw, CheckCircle, Map, Play, Clock, Trash2, Save, Download, Key, Check, AlertCircle, Loader2, X, ExternalLink, Lock, GraduationCap, User, PenTool, Home, Zap, Pencil, ShieldCheck, ShieldAlert, Shield, Sparkles } from 'lucide-react';
+import { ArrowRight, CheckCircle, Play, Clock, Loader2, X, PenTool, Sparkles, PlayCircle, Pencil, LayoutGrid, User, BookOpen, Download, Check, AlertCircle, Link, ShieldCheck, Zap, Database, Activity, Eye, Info, Home, ChevronRight } from 'lucide-react';
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 
+// @google/genai Guidelines: Define AIStudio interface to resolve conflict with pre-existing global declarations
+declare global {
+  interface AIStudio {
+    hasSelectedApiKey: () => Promise<boolean>;
+    openSelectKey: () => Promise<void>;
+  }
+
+  interface Window {
+    aistudio?: AIStudio;
+  }
+}
+
 const App: React.FC = () => {
-  const [stage, setStage] = useState<AppStage>(AppStage.ONBOARDING);
+  const [stage, setStage] = useState<AppStage>(AppStage.SCENARIO_SELECTION);
   const [selectedScenario, setSelectedScenario] = useState<Scenario | null>(null);
   const [blueprint, setBlueprint] = useState<BlueprintColumn[]>([]);
   const [gradingResult, setGradingResult] = useState<GradingResult | null>(null);
   const [isGrading, setIsGrading] = useState(false);
-  const [savedGames, setSavedGames] = useState<SavedBlueprint[]>([]);
-  const [currentSaveId, setCurrentSaveId] = useState<string | undefined>(undefined);
+  const [isConnected, setIsConnected] = useState(false);
   
-  // User Identity State
-  const [studentName, setStudentName] = useState('');
-  const [teamNumber, setTeamNumber] = useState('');
+  const [studentName, setStudentName] = useState(localStorage.getItem('student_name') || '');
 
-  // Define layers for iteration in tables and exports (Fixes undefined layers error)
-  const layers: (keyof BlueprintColumn)[] = ['physical', 'customer', 'frontstage', 'backstage', 'support'];
-  
-  // Custom Scenario Modal State
   const [showCustomModal, setShowCustomModal] = useState(false);
   const [customTitle, setCustomTitle] = useState('');
   const [customContext, setCustomContext] = useState('');
-  
-  // Tutorial State
   const [isTutorialMode, setIsTutorialMode] = useState(false);
 
-  // File Input Ref for Import
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Hidden Ref for PDF Generation
-  const printRef = useRef<HTMLDivElement>(null);
-
+  const builderRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
 
+  // Check connection status on mount
   useEffect(() => {
-    if (stage === AppStage.SCENARIO_SELECTION) {
-      setSavedGames(getSavedBlueprints());
-    }
-  }, [stage]);
+    const checkConnection = async () => {
+      if (window.aistudio) {
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        setIsConnected(hasKey);
+      }
+    };
+    checkConnection();
+  }, []);
 
-  const handleStartTraining = () => {
-    if (!studentName.trim() || !teamNumber.trim()) {
-        alert("Please enter your Student Name and Team Number to verify your identity.");
-        return;
+  useEffect(() => {
+    localStorage.setItem('student_name', studentName);
+  }, [studentName]);
+
+  const handleAuthorize = async () => {
+    if (window.aistudio) {
+      await window.aistudio.openSelectKey();
+      setIsConnected(true);
     }
-    // Proceed directly as API key is handled by the environment as per guidelines.
-    setStage(AppStage.SCENARIO_SELECTION);
   };
 
+  const resetApp = useCallback(() => {
+    setStage(AppStage.SCENARIO_SELECTION);
+    setSelectedScenario(null);
+    setBlueprint([]);
+    setGradingResult(null);
+    setIsTutorialMode(false);
+    // Reliable navigation back to selection screen requires a reset of scroll position
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, []);
+
+  const handleGoHome = useCallback((e?: React.MouseEvent | React.KeyboardEvent) => {
+    if (e && 'preventDefault' in e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
+    // Safety check for active building
+    const isBuilderActive = stage === AppStage.BLUEPRINT_BUILDER && !isTutorialMode;
+    if (isBuilderActive) {
+      if (window.confirm("Abort Mission? Any unsaved progress on your blueprint will be lost.")) {
+        resetApp();
+      }
+    } else {
+      resetApp();
+    }
+  }, [stage, isTutorialMode, resetApp]);
+
+  // Global Keyboard Shortcut for Home (Esc)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && stage !== AppStage.SCENARIO_SELECTION) {
+        handleGoHome();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [stage, handleGoHome]);
+
   const startScenario = (scenario: Scenario) => {
+    if (!isConnected) {
+      handleAuthorize();
+      return;
+    }
     setSelectedScenario(scenario);
     setIsTutorialMode(false);
-    setCurrentSaveId(undefined); 
     setGradingResult(null); 
-    
     const initialBlueprint: BlueprintColumn[] = scenario.initialPhases.map((phase, index) => ({
       id: `col-${index}`,
       phase,
-      physical: '',
-      customer: '',
-      frontstage: '',
-      backstage: '',
-      support: '',
-      painPoints: [],
-      opportunities: []
+      physical: '', customer: '', frontstage: '', backstage: '', support: '',
+      painPoints: [], opportunities: []
     }));
     setBlueprint(initialBlueprint);
     setStage(AppStage.BLUEPRINT_BUILDER);
-  };
-
-  const startCustomScenario = () => {
-    setShowCustomModal(true);
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const handleCreateCustom = () => {
-    if (!customTitle.trim() || !customContext.trim()) return;
+    if (!customTitle.trim()) { alert("Please enter a Codename."); return; }
+    if (!customContext.trim()) { alert("Please provide context."); return; }
     const customScenario: Scenario = {
       id: `custom-${Date.now()}`,
       title: customTitle,
-      description: 'A custom designed service blueprint scenario.',
+      description: 'Custom Designed Scenario',
       difficulty: 'Advanced',
-      initialPhases: ['Arrival', 'Service Interaction', 'Departure'],
+      initialPhases: ['Initial Phase'],
       context: customContext
     };
     setShowCustomModal(false);
@@ -99,534 +134,402 @@ const App: React.FC = () => {
   };
 
   const startTutorial = () => {
-    const scenario = TUTORIAL_SCENARIO;
-    setSelectedScenario(scenario);
+    if (!studentName.trim()) { alert("Please enter your Student Name in the header first."); return; }
+    setSelectedScenario(TUTORIAL_SCENARIO);
     setIsTutorialMode(true);
-    setCurrentSaveId(undefined);
     setGradingResult(null);
-    const initialBlueprint: BlueprintColumn[] = scenario.initialPhases.map((phase, index) => ({
+    setBlueprint(TUTORIAL_SCENARIO.initialPhases.map((phase, index) => ({
       id: `col-${index}`,
       phase,
-      physical: '',
-      customer: '',
-      frontstage: '',
-      backstage: '',
-      support: '',
-      painPoints: [],
-      opportunities: []
-    }));
-    setBlueprint(initialBlueprint);
+      physical: '', customer: '', frontstage: '', backstage: '', support: '',
+      painPoints: [], opportunities: []
+    })));
     setStage(AppStage.BLUEPRINT_BUILDER);
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const handleLoadExample = () => {
     const exampleScenario = SCENARIOS.find(s => s.id === 'coffee-shop');
     if (exampleScenario) {
-        setSelectedScenario(exampleScenario);
-        setBlueprint(EXAMPLE_BLUEPRINT);
-        setCurrentSaveId(undefined);
-        setGradingResult(null);
-        setStage(AppStage.BLUEPRINT_BUILDER);
+      setSelectedScenario(exampleScenario);
+      setBlueprint(JSON.parse(JSON.stringify(EXAMPLE_BLUEPRINT)));
+      setGradingResult(null);
+      setIsTutorialMode(false);
+      setStage(AppStage.BLUEPRINT_BUILDER);
+      window.scrollTo({ top: 0, behavior: 'instant' });
     }
-  };
-
-  const resumeGame = (save: SavedBlueprint) => {
-    const scenario = SCENARIOS.find(s => s.id === save.scenarioId) || {
-        id: save.scenarioId,
-        title: save.name,
-        description: 'Custom Saved Scenario',
-        difficulty: 'Intermediate',
-        initialPhases: [],
-        context: 'Loaded from save'
-    };
-    setSelectedScenario(scenario);
-    setBlueprint(save.blueprint);
-    setCurrentSaveId(save.id);
-    setGradingResult(null);
-    setStage(AppStage.BLUEPRINT_BUILDER);
-  };
-
-  const handleDeleteSave = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (window.confirm("Delete this saved blueprint?")) {
-      deleteBlueprint(id);
-      setSavedGames(getSavedBlueprints());
-    }
-  };
-
-  const handleSaveGame = (name: string) => {
-    if (selectedScenario) {
-      const savedGame = saveBlueprint(name, selectedScenario.id, blueprint, currentSaveId);
-      setCurrentSaveId(savedGame.id);
-      alert("Blueprint saved successfully!");
-    }
-  };
-
-  const triggerImport = () => {
-    if (fileInputRef.current) {
-        fileInputRef.current.click();
-    }
-  };
-
-  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fileReader = new FileReader();
-    if (e.target.files && e.target.files.length > 0) {
-        fileReader.readAsText(e.target.files[0], "UTF-8");
-        fileReader.onload = (event) => {
-            try {
-                if (event.target?.result) {
-                    const parsedData = JSON.parse(event.target.result as string);
-                    if (!parsedData.scenario || !parsedData.blueprint) {
-                        throw new Error("Invalid file format");
-                    }
-                    if (stage === AppStage.SCENARIO_SELECTION) {
-                        setSelectedScenario(parsedData.scenario);
-                        setBlueprint(parsedData.blueprint);
-                        setCurrentSaveId(undefined);
-                        setGradingResult(null);
-                        setStage(AppStage.BLUEPRINT_BUILDER);
-                    } else if (stage === AppStage.BLUEPRINT_BUILDER) {
-                        setSelectedScenario(parsedData.scenario);
-                        setBlueprint(parsedData.blueprint);
-                        setCurrentSaveId(undefined);
-                    }
-                }
-            } catch (err) {
-                console.error(err);
-                alert("Failed to load file.");
-            }
-            if (fileInputRef.current) fileInputRef.current.value = '';
-        };
-    }
-  };
-
-  const handleGoHome = () => {
-    resetApp();
   };
 
   const handleSubmission = async () => {
     if (!selectedScenario) return;
     setStage(AppStage.SUBMISSION);
     setIsGrading(true);
-    const result = await gradeBlueprint(blueprint, selectedScenario, gradingResult || undefined);
-    setGradingResult(result);
-    setIsGrading(false);
-    setStage(AppStage.RESULTS);
-  };
-
-  const isColumnBlank = (col: BlueprintColumn) => {
-    return !col.physical.trim() && 
-           !col.customer.trim() && 
-           !col.frontstage.trim() && 
-           !col.backstage.trim() && 
-           !col.support.trim() && 
-           col.painPoints.length === 0 && 
-           col.opportunities.length === 0;
-  };
-
-  const handleDownloadPDF = async () => {
-    if (!printRef.current) return;
-    
-    const element = printRef.current;
-    element.style.display = 'block';
-    element.style.position = 'absolute';
-    element.style.left = '-10000px';
-    element.style.top = '0';
-    element.style.width = '1200px'; 
-
     try {
-      const canvas = await html2canvas(element, { 
-        scale: 2, 
-        useCORS: true, 
-        backgroundColor: '#ffffff',
-        logging: false
-      });
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 10;
+      const result = await gradeBlueprint(blueprint, selectedScenario, gradingResult || undefined);
+      setGradingResult(result);
+      setIsGrading(false);
+      setStage(AppStage.RESULTS);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (e: any) {
+      setIsGrading(false);
+      setStage(AppStage.BLUEPRINT_BUILDER);
       
-      const contentWidth = pageWidth - (margin * 2);
-      const ratio = contentWidth / canvas.width;
-      const contentHeight = canvas.height * ratio;
-      
-      let heightLeft = contentHeight;
-      let position = margin;
-
-      pdf.addImage(imgData, 'PNG', margin, position, contentWidth, contentHeight);
-      heightLeft -= (pageHeight - (margin * 2));
-
-      while (heightLeft > 0) {
-        position = heightLeft - contentHeight + margin;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', margin, position, contentWidth, contentHeight);
-        heightLeft -= (pageHeight - (margin * 2));
+      if (e?.message === "QUOTA_EXHAUSTED" || e?.message?.includes('429')) {
+          alert("Rate Limit Exceeded (429). The free tier API key has a limited number of requests per minute. Please wait 60 seconds and try again, or use a project with billing enabled.");
+      } else if (e?.message?.includes("Requested entity was not found")) {
+          setIsConnected(false);
+          alert("API Key expired or invalid. Please re-authorize via the 'Link Project' button.");
+      } else {
+          alert("Submission failed. This could be due to network issues or API limits. Please try again in a moment.");
       }
-
-      pdf.save(`BlueprintEvidence_${studentName.replace(/\s+/g, '_')}_Team${teamNumber}.pdf`);
-    } catch (err) {
-      console.error("PDF Export failed:", err);
-      alert("Error generating PDF. Please try again.");
-    } finally {
-      element.style.display = 'none';
     }
   };
 
   const handleImproveWork = () => {
     setStage(AppStage.BLUEPRINT_BUILDER);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const resetApp = () => {
-    setStage(AppStage.SCENARIO_SELECTION);
-    setSelectedScenario(null);
-    setBlueprint([]);
-    setGradingResult(null);
-    setIsTutorialMode(false);
-    setCurrentSaveId(undefined);
-  };
-
-  const chunkBlueprint = (arr: BlueprintColumn[], maxSize: number = 4) => {
-    // Filter out columns that are blank placeholders at the end
-    const filteredArr = arr.filter(col => !isColumnBlank(col));
-    const result = [];
-    for (let i = 0; i < filteredArr.length; i += maxSize) {
-      result.push(filteredArr.slice(i, i + maxSize));
+  const handleDownloadPDF = async () => {
+    const element = stage === AppStage.RESULTS ? resultsRef.current : builderRef.current;
+    if (!element) {
+        alert("Nothing to export. Please complete the blueprint or view results first.");
+        return;
     }
-    return result;
+    
+    try {
+      const canvas = await html2canvas(element, { 
+        scale: 1.5, 
+        useCORS: true, 
+        backgroundColor: '#ffffff',
+        logging: false,
+        scrollY: -window.scrollY, 
+        width: element.scrollWidth,
+        height: element.scrollHeight
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      
+      const margin = 10;
+      const contentWidth = pageWidth - (margin * 2);
+      const contentHeight = (canvas.height * contentWidth) / canvas.width;
+      
+      let heightLeft = contentHeight;
+      let position = margin;
+      
+      pdf.addImage(imgData, 'PNG', margin, position, contentWidth, contentHeight);
+      heightLeft -= (pageHeight - margin * 2);
+      
+      while (heightLeft >= 0) {
+        position = heightLeft - contentHeight + margin;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', margin, position, contentWidth, contentHeight);
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save(`${studentName || 'Student'}_Service_Brief.pdf`);
+    } catch (err) { 
+      console.error("Export Error:", err);
+      alert("Failed to generate PDF. Check browser console for details."); 
+    }
   };
-
-  const renderOnboarding = () => (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-600 to-purple-700 flex items-center justify-center p-6 relative">
-      <div className="bg-white rounded-3xl shadow-2xl p-12 max-w-2xl text-center relative z-10">
-        <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-6">
-          <Map size={40} />
-        </div>
-        <h1 className="text-4xl font-extrabold text-gray-900 mb-4">Service Blueprint Master</h1>
-        <p className="text-xl text-gray-600 mb-8 leading-relaxed">
-          Welcome, future Service Designer. Map customer journeys, identify invisible processes, and spot opportunities for innovation.
-        </p>
-        <div className="bg-gray-50 p-6 rounded-2xl mb-8 text-left border border-gray-100">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <User size={14}/> Cadet Identification
-            </h3>
-            <div className="space-y-4">
-                <input
-                    type="text"
-                    value={studentName}
-                    onChange={(e) => setStudentName(e.target.value)}
-                    placeholder="Student Name"
-                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-gray-900"
-                />
-                <input
-                    type="text"
-                    value={teamNumber}
-                    onChange={(e) => setTeamNumber(e.target.value)}
-                    placeholder="Team Number / Squad ID"
-                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-gray-900"
-                />
-            </div>
-        </div>
-        <div className="flex flex-col items-center gap-4">
-            <button 
-              onClick={handleStartTraining}
-              className="w-full text-lg font-bold px-10 py-4 rounded-xl shadow-lg transition-all transform hover:scale-[1.02] flex items-center justify-center gap-3 bg-indigo-600 hover:bg-indigo-700 text-white"
-            >
-              Start Your Training <ArrowRight />
-            </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderScenarioSelection = () => (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-10">
-            <div>
-                <h2 className="text-3xl font-bold text-gray-800 mb-2">Select a Mission</h2>
-                <p className="text-gray-500">Choose a scenario to demonstrate your service design skills.</p>
-            </div>
-            <div className="flex items-center gap-3">
-                <button onClick={startTutorial} className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-indigo-200 transition-transform hover:scale-105"><GraduationCap size={20} /> Start Bootcamp</button>
-            </div>
-        </div>
-
-        <div className="mb-8 flex flex-col md:flex-row gap-6">
-            <div onClick={startCustomScenario} className="flex-1 bg-slate-800 rounded-3xl p-10 cursor-pointer transition-all hover:scale-[1.02] hover:shadow-2xl hover:shadow-indigo-200 group relative overflow-hidden border border-slate-700">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-bl-full transform translate-x-8 -translate-y-8 group-hover:scale-150 transition-transform"></div>
-                <PenTool className="text-indigo-400 mb-6 group-hover:rotate-12 transition-transform" size={40} />
-                <h3 className="text-3xl font-black text-white mb-3">Design Your Own</h3>
-                <p className="text-slate-400 mb-8 text-sm max-w-xs leading-relaxed">Define your own custom service environment and constraints.</p>
-                <button className="text-white bg-indigo-600 hover:bg-indigo-700 px-8 py-3 rounded-2xl font-bold transition-all shadow-lg shadow-indigo-900/40">Initialize Custom Sim</button>
-            </div>
-
-            <div onClick={handleLoadExample} className="flex-1 bg-gradient-to-br from-indigo-700 to-purple-800 rounded-3xl p-10 cursor-pointer transition-all hover:scale-[1.02] hover:shadow-2xl hover:shadow-purple-200 group relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-bl-full transform translate-x-8 -translate-y-8 group-hover:scale-150 transition-transform"></div>
-                <Sparkles className="text-amber-400 mb-6 group-hover:scale-125 transition-transform" size={40} />
-                <h3 className="text-3xl font-black text-white mb-3">Push Your Skills</h3>
-                <p className="text-indigo-100/70 mb-8 text-sm max-w-xs leading-relaxed">Study an expert-level example of a busy coffee shop rush.</p>
-                <button className="text-indigo-900 bg-white hover:bg-indigo-50 px-8 py-3 rounded-2xl font-bold transition-all shadow-lg shadow-indigo-900/20">Analyze Expert Work</button>
-            </div>
-        </div>
-
-        <div className="mb-12">
-            <h2 className="text-xl font-bold text-gray-700 mb-4 flex items-center gap-2"><Save size={20} className="text-indigo-600"/> Mission Library</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {savedGames.length > 0 ? savedGames.map(save => (
-                    <div key={save.id} onClick={() => resumeGame(save)} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-indigo-300 cursor-pointer transition-all">
-                        <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-bold text-gray-800 truncate pr-2">{save.name}</h3>
-                            <button onClick={(e) => handleDeleteSave(save.id, e)} className="text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
-                        </div>
-                        <p className="text-sm text-indigo-600 font-medium mb-3">{SCENARIOS.find(s => s.id === save.scenarioId)?.title || 'Custom Mission'}</p>
-                    </div>
-                )) : (
-                    <div className="col-span-full py-8 text-center text-gray-400 bg-gray-100/50 rounded-2xl border-2 border-dashed border-gray-200">
-                        No saved missions found. Start a new one below!
-                    </div>
-                )}
-            </div>
-        </div>
-
-        <div className="mt-12">
-            <h2 className="text-xl font-bold text-gray-800 mb-8 flex items-center gap-3"><Play size={20} className="text-indigo-600"/> Mission Challenges</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 pb-12">
-                {SCENARIOS.map((scenario) => (
-                    <div key={scenario.id} className="bg-white rounded-2xl shadow-sm hover:shadow-xl border border-gray-100 overflow-hidden transition-all group p-8 flex flex-col">
-                        <div className="flex justify-between items-start mb-4">
-                            <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest ${
-                                scenario.difficulty === 'Beginner' ? 'bg-green-100 text-green-700' :
-                                scenario.difficulty === 'Intermediate' ? 'bg-amber-100 text-amber-700' :
-                                'bg-red-100 text-red-700'
-                            }`}>
-                                {scenario.difficulty}
-                            </span>
-                            <Clock size={16} className="text-gray-300" />
-                        </div>
-                        <h3 className="text-2xl font-bold text-gray-900 mb-3">{scenario.title}</h3>
-                        <p className="text-gray-500 text-sm mb-8 flex-1 leading-relaxed">{scenario.description}</p>
-                        <button onClick={() => startScenario(scenario)} className="w-full bg-slate-900 text-white py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-600 transition-all active:scale-95 group-hover:shadow-lg group-hover:shadow-indigo-100">
-                            Start Mission <Play size={16} className="fill-current" />
-                        </button>
-                    </div>
-                ))}
-            </div>
-        </div>
-      </div>
-    </div>
-  );
 
   return (
-    <div className="font-sans text-gray-900 selection:bg-indigo-100">
-      <input type="file" ref={fileInputRef} onChange={handleImportFile} className="hidden" accept=".json" />
-      
-      {stage === AppStage.ONBOARDING && renderOnboarding()}
-      {stage === AppStage.SCENARIO_SELECTION && renderScenarioSelection()}
-      {stage === AppStage.BLUEPRINT_BUILDER && selectedScenario && (
-        <>
-          <BlueprintBuilder 
-            blueprint={blueprint} 
-            setBlueprint={setBlueprint} 
-            onComplete={handleSubmission}
-            onSave={handleSaveGame}
-            scenario={selectedScenario}
-            isTutorial={isTutorialMode}
-            onTutorialComplete={resetApp}
-            onBack={handleGoHome}
-            onExport={handleDownloadPDF}
-            onImport={triggerImport}
-            currentSaveId={currentSaveId}
-            previousGradingResult={gradingResult}
-          />
-          {!isTutorialMode && <MentorChat blueprint={blueprint} scenario={selectedScenario} />}
-        </>
+    <div className="font-sans text-slate-900 selection:bg-indigo-100 min-h-screen bg-slate-50 flex flex-col">
+      {/* Global Command Bar: Persistent Navigation */}
+      {stage !== AppStage.SCENARIO_SELECTION && stage !== AppStage.SUBMISSION && (
+        <nav className="sticky top-0 z-[100] bg-slate-900/95 backdrop-blur-md border-b border-slate-800 shadow-2xl px-6 py-4 flex items-center justify-between animate-in fade-in slide-in-from-top-4 duration-500 shrink-0">
+           <div className="flex items-center gap-4">
+              <button 
+                type="button"
+                onClick={handleGoHome}
+                className="flex items-center gap-3 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-black text-sm transition-all active:scale-95 shadow-lg group cursor-pointer"
+              >
+                <LayoutGrid size={18} className="group-hover:rotate-90 transition-transform duration-300" />
+                <span className="hidden sm:inline uppercase tracking-widest text-[10px]">Mission Control</span>
+              </button>
+              <div className="h-6 w-px bg-slate-700 mx-2 hidden sm:block"></div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500 font-bold uppercase text-[9px] tracking-widest hidden lg:block">ACTIVE OPERATION</span>
+                <ChevronRight size={14} className="text-slate-600 hidden lg:block" />
+                <h2 className="text-white font-black text-lg truncate max-w-[150px] md:max-w-none tracking-tight">{selectedScenario?.title}</h2>
+              </div>
+           </div>
+
+           <div className="flex items-center gap-4">
+              {stage === AppStage.BLUEPRINT_BUILDER && (
+                <button 
+                  type="button"
+                  onClick={handleSubmission}
+                  className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-xl hover:bg-indigo-500 transition-all flex items-center gap-2 active:scale-95"
+                >
+                  Analyze <ArrowRight size={16} />
+                </button>
+              )}
+              {stage === AppStage.RESULTS && (
+                <button 
+                  type="button"
+                  onClick={handleDownloadPDF}
+                  className="bg-slate-800 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-700 transition-all flex items-center gap-2"
+                >
+                  <Download size={16} /> Export
+                </button>
+              )}
+           </div>
+        </nav>
       )}
-      {stage === AppStage.SUBMISSION && (
-         <div className="min-h-screen bg-indigo-900 flex flex-col items-center justify-center p-6 text-white text-center">
-            <div className="relative mb-8">
-                <Loader2 className="animate-spin text-indigo-400" size={64} />
-                <GraduationCap className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white" size={24} />
-            </div>
-            <h2 className="text-3xl font-bold mb-4">{gradingResult ? "Checking Improvements..." : "Analyzing Your Blueprint..."}</h2>
-            <p className="text-indigo-200 max-w-sm">The Professor is reviewing your logic, checking for gaps, and evaluating your service layers.</p>
-        </div>
-      )}
-      {stage === AppStage.RESULTS && gradingResult && (
-        <div className="min-h-screen bg-gray-50 py-8 px-4 flex justify-center relative">
-            <div ref={resultsRef} className="max-w-5xl w-full bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-gray-100">
-                <div className="bg-white border-b border-gray-100 px-8 py-8 flex flex-col sm:flex-row justify-between items-center gap-6">
-                    <div className="flex items-center gap-5">
-                        <button 
-                            onClick={handleGoHome} 
-                            className="p-3 bg-gray-50 text-gray-400 hover:text-indigo-600 transition-all rounded-2xl hover:bg-white hover:shadow-md active:scale-95" 
-                            title="Back to Mission Selection"
-                        >
-                            <Home size={24} />
-                        </button>
-                        <div>
-                            <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">{selectedScenario?.title}</h1>
-                            <p className="text-indigo-500 font-bold uppercase text-[10px] tracking-[0.2em] mt-1">Performance Report</p>
-                        </div>
+
+      <main className="flex-1 flex flex-col overflow-x-hidden">
+        {stage === AppStage.SCENARIO_SELECTION && (
+          <div className="p-8 pb-24 animate-in fade-in duration-500">
+            <div className="max-w-7xl mx-auto">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-16 border-b-4 border-slate-200 pb-10">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                      <LayoutGrid size={28} />
                     </div>
-                    <div className="text-center sm:text-right bg-slate-50 px-6 py-4 rounded-2xl border border-slate-100 min-w-[200px]">
-                        <div className="font-extrabold text-indigo-900 text-lg">{studentName}</div>
-                        <div className="text-gray-500 text-sm font-semibold">Team {teamNumber}</div>
-                        <p className="text-[10px] text-gray-400 mt-2 uppercase font-black tracking-widest">{new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                    <div>
+                      <h1 className="text-4xl font-black text-slate-900 tracking-tighter leading-none">Mission Control</h1>
+                      <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mt-1">Service Blueprint Toolkit</p>
                     </div>
-                </div>
-                
-                <div className="p-8 lg:p-12 bg-white">
-                    <div className="flex flex-col md:flex-row items-center gap-10 mb-12">
-                        <div className={`w-36 h-36 rounded-full border-[12px] flex flex-col items-center justify-center shadow-inner ${
-                            gradingResult.score >= 90 ? 'border-green-500 text-green-600 bg-green-50/30' : 
-                            gradingResult.score >= 80 ? 'border-indigo-500 text-indigo-600 bg-indigo-50/30' :
-                            'border-amber-500 text-amber-600 bg-amber-50/30'
-                        }`}>
-                            <span className="text-5xl font-black leading-none">{gradingResult.letterGrade}</span>
-                        </div>
-                        <div className="flex-1 text-center md:text-left">
-                            <h2 className="text-4xl font-black text-gray-900 mb-2">Score: {gradingResult.score} XP</h2>
-                            <p className="text-gray-600 text-lg leading-relaxed max-w-2xl italic">"{gradingResult.feedbackSummary}"</p>
-                        </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex items-center gap-3 bg-white px-4 py-2.5 rounded-xl border border-slate-200 shadow-sm">
+                      <User className="text-slate-300" size={16} />
+                      <input type="text" value={studentName} onChange={(e) => setStudentName(e.target.value)} placeholder="Student Name" className="bg-transparent font-bold text-xs w-32 outline-none" />
                     </div>
                     
-                    <div className="grid md:grid-cols-2 gap-8 mb-10">
-                        <div className="bg-green-50/40 p-8 rounded-3xl border border-green-100 shadow-sm transition-all hover:shadow-md">
-                            <h3 className="font-extrabold text-green-700 mb-5 flex items-center gap-3 text-lg"><CheckCircle size={22}/> Mission Successes</h3>
-                            <ul className="space-y-4">
-                                {gradingResult.strengths.map((item, i) => (
-                                    <li key={i} className="flex gap-4 text-sm text-gray-700 leading-relaxed">
-                                        <div className="w-5 h-5 rounded-full bg-green-200 flex items-center justify-center shrink-0 mt-0.5"><Check size={12} className="text-green-700" /></div>
-                                        {item}
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                        <div className="bg-red-50/40 p-8 rounded-3xl border border-red-100 shadow-sm transition-all hover:shadow-md">
-                            <h3 className="font-extrabold text-red-700 mb-5 flex items-center gap-3 text-lg"><AlertCircle size={22}/> Strategic Gaps</h3>
-                             <ul className="space-y-4">
-                                {gradingResult.weaknesses.length > 0 ? gradingResult.weaknesses.map((item, i) => (
-                                    <li key={i} className="flex gap-4 text-sm text-gray-700 leading-relaxed">
-                                        <div className="w-5 h-5 rounded-full bg-red-200 flex items-center justify-center shrink-0 mt-0.5"><X size={12} className="text-red-700" /></div>
-                                        {item}
-                                    </li>
-                                )) : (
-                                    <li className="text-green-700 font-black text-center py-6 flex flex-col items-center gap-4">
-                                        <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center text-green-600 animate-bounce">
-                                            <GraduationCap size={36} />
-                                        </div>
-                                        <div>
-                                            <p className="text-lg">Outstanding Performance!</p>
-                                        </div>
-                                    </li>
-                                )}
-                            </ul>
-                        </div>
-                    </div>
+                    <button 
+                      onClick={handleAuthorize}
+                      className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 font-bold text-[11px] tracking-wide uppercase shadow-sm transition-all active:scale-95 ${
+                        isConnected 
+                        ? 'bg-emerald-50 border-emerald-100 text-emerald-600' 
+                        : 'bg-amber-50 border-amber-100 text-amber-600 animate-pulse'
+                      }`}
+                    >
+                      <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-amber-500'}`}></div>
+                      {isConnected ? 'Uplink Established' : 'Authorize AI Uplink'}
+                    </button>
 
-                    {/* Compact Visualization for Report */}
-                    <div className="mt-12 overflow-x-auto border border-gray-200 rounded-2xl shadow-sm blueprint-scroll">
-                        <table className="w-full text-left border-collapse bg-white text-xs">
-                            <thead>
-                                <tr className="bg-slate-50 border-b">
-                                    <th className="p-4 font-bold text-gray-500 border-r w-40 sticky left-0 bg-slate-50 z-10 uppercase tracking-widest text-[9px]">Layers</th>
-                                    {blueprint.filter(c => !isColumnBlank(c)).map((col, i) => (
-                                        <th key={col.id} className="p-4 font-black text-indigo-700 border-r min-w-[180px]">
-                                            <span className="text-[10px] text-gray-400 block font-bold mb-1">PHASE {i + 1}</span>
-                                            {col.phase}
-                                        </th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {layers.map(layer => (
-                                    <tr key={layer} className="border-b hover:bg-slate-50/30 transition-colors">
-                                        <td className="p-4 font-bold text-gray-600 bg-slate-50/50 border-r sticky left-0 z-10">
-                                            {LAYER_INFO[layer as LayerType].label}
-                                        </td>
-                                        {blueprint.filter(c => !isColumnBlank(c)).map(col => (
-                                            <td key={col.id} className="p-4 border-r align-top text-gray-800 font-medium">
-                                                {col[layer] || <span className="text-gray-300">—</span>}
-                                            </td>
+                    <button onClick={startTutorial} className="bg-indigo-600 text-white px-7 py-3 rounded-xl font-black flex items-center gap-2 shadow-xl hover:scale-105 active:scale-95 text-[11px] uppercase tracking-widest transition-transform">
+                      <BookOpen size={16} /> Bootcamp
+                    </button>
+                  </div>
+              </div>
+
+              {!isConnected && (
+                <div className="mb-16 bg-gradient-to-r from-amber-500 to-orange-600 rounded-[3rem] p-12 text-white flex flex-col md:flex-row items-center gap-10 shadow-2xl">
+                   <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center shrink-0">
+                      <Zap size={48} className="text-amber-100" />
+                   </div>
+                   <div className="flex-1">
+                      <h2 className="text-3xl font-black mb-3">AI Connection Required</h2>
+                      <p className="text-amber-50 opacity-90 text-lg max-w-2xl">To use AI grading, each student must provide their own Gemini API key or link a Google Cloud Project.</p>
+                   </div>
+                   <div className="flex flex-col gap-3 shrink-0">
+                      <button onClick={handleAuthorize} className="bg-white text-orange-600 px-10 py-4 rounded-2xl font-black text-lg flex items-center gap-2 hover:bg-slate-50 transition-colors shadow-lg">
+                         <Link size={20} /> Link Project
+                      </button>
+                      <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-white/80 text-[10px] font-bold text-center uppercase tracking-widest hover:text-white transition-colors">
+                        About Project Keys & Billing
+                      </a>
+                   </div>
+                </div>
+              )}
+
+              <div className="mb-16 flex flex-col md:flex-row gap-10">
+                  <div className="flex-1 bg-slate-900 rounded-[3rem] p-16 relative overflow-hidden group shadow-2xl border border-slate-800 transition-all hover:border-indigo-500/50">
+                      <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-bl-full pointer-events-none"></div>
+                      <PenTool className="text-indigo-400 mb-10" size={64} />
+                      <h3 className="text-5xl font-black text-white mb-6 tracking-tighter">Custom Simulation</h3>
+                      <p className="text-slate-400 mb-16 text-xl leading-relaxed">Define your own service environment and persona.</p>
+                      <button onClick={() => setShowCustomModal(true)} className="bg-indigo-600 text-white px-12 py-5 rounded-[2rem] font-black shadow-2xl hover:scale-110 active:scale-95 text-xl transition-transform">Initialize Protocol</button>
+                  </div>
+
+                  <div className="flex-1 bg-indigo-700 rounded-[3rem] p-16 relative overflow-hidden group shadow-2xl border border-indigo-600 transition-all hover:border-white/20">
+                      <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-bl-full pointer-events-none"></div>
+                      <Sparkles className="text-amber-400 mb-10" size={64} />
+                      <h3 className="text-5xl font-black text-white mb-6 tracking-tighter">Expert Showcase</h3>
+                      <p className="text-indigo-100 mb-16 text-xl leading-relaxed">Analyze a masterfully crafted coffee rush blueprint.</p>
+                      <button onClick={handleLoadExample} className="bg-white text-indigo-700 px-12 py-5 rounded-[2rem] font-black shadow-2xl hover:bg-slate-50 hover:scale-110 active:scale-95 text-xl transition-transform text-center">Analyze Mastery</button>
+                  </div>
+              </div>
+
+              <div>
+                  <h2 className="text-3xl font-black text-slate-800 mb-10 flex items-center gap-4"><PlayCircle size={36} className="text-indigo-600"/> Simulation Briefs</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+                      {SCENARIOS.map((scenario) => (
+                          <div key={scenario.id} className="bg-white rounded-[3rem] shadow-sm hover:shadow-xl border-4 border-slate-100 p-12 flex flex-col relative overflow-hidden group transition-all">
+                              <div className="absolute top-0 right-0 w-32 h-32 bg-slate-50 pointer-events-none -z-10 group-hover:bg-indigo-50"></div>
+                              <div className="flex justify-between items-start mb-8">
+                                  <span className="px-5 py-2 rounded-full text-[11px] font-black uppercase tracking-widest bg-indigo-50 text-indigo-600">{scenario.difficulty}</span>
+                                  <Clock size={24} className="text-slate-200" />
+                              </div>
+                              <h3 className="text-4xl font-black text-slate-900 mb-6 group-hover:text-indigo-600 transition-colors leading-none">{scenario.title}</h3>
+                              <p className="text-slate-500 text-lg mb-12 flex-1 leading-relaxed">{scenario.description}</p>
+                              <button 
+                                onClick={() => startScenario(scenario)} 
+                                className={`w-full py-5 rounded-[2rem] font-black flex items-center justify-center gap-4 transition-all active:scale-95 shadow-2xl text-xl ${
+                                  !isConnected && scenario.difficulty !== 'Beginner' 
+                                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                                  : 'bg-slate-900 text-white hover:bg-indigo-600'
+                                }`}
+                              >
+                                Deploy Mission <Play size={24} className="fill-current" />
+                              </button>
+                          </div>
+                      ))}
+                  </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {stage === AppStage.BLUEPRINT_BUILDER && selectedScenario && (
+          <div ref={builderRef} className="flex-1 flex flex-col min-h-0">
+            <BlueprintBuilder 
+              blueprint={blueprint} setBlueprint={setBlueprint} 
+              onComplete={handleSubmission} 
+              scenario={selectedScenario} isTutorial={isTutorialMode}
+              onTutorialComplete={resetApp} onBackToControl={handleGoHome}
+              onExport={handleDownloadPDF} 
+              previousGradingResult={gradingResult}
+            />
+          </div>
+        )}
+
+        {stage === AppStage.SUBMISSION && (
+           <div className="flex-1 bg-indigo-900 flex flex-col items-center justify-center p-6 text-white text-center min-h-[500px]">
+              <Loader2 className="animate-spin text-indigo-400 mb-8" size={64} />
+              <h2 className="text-4xl font-black mb-4 tracking-tight">Professor Reviewing Work...</h2>
+              <p className="text-indigo-200 max-w-sm text-lg leading-relaxed">Analyzing logic and systemic dependencies to provide objective feedback.</p>
+              <p className="text-indigo-400 mt-4 text-[10px] uppercase font-bold tracking-[0.2em] animate-pulse">Establishing Neural Uplink</p>
+          </div>
+        )}
+
+        {stage === AppStage.RESULTS && gradingResult && (
+          <div className="flex-1 bg-slate-50 py-16 px-4 flex justify-center animate-in fade-in zoom-in-95 duration-500">
+              <div ref={resultsRef} className="max-w-6xl w-full bg-white rounded-[4rem] shadow-2xl flex flex-col border border-slate-100 mb-16 overflow-hidden">
+                  <div className="p-16 lg:p-24 bg-white flex-1 overflow-visible">
+                      <div className="flex flex-col md:flex-row items-center gap-16 mb-20">
+                          <div className={`w-56 h-56 rounded-full border-[20px] flex flex-col items-center justify-center shadow-xl shrink-0 ${gradingResult.score >= 80 ? 'border-green-500 text-green-600 bg-green-50' : 'border-amber-500 text-amber-600 bg-amber-50'}`}>
+                              <span className="text-8xl font-black">{gradingResult.letterGrade}</span>
+                          </div>
+                          <div className="flex-1 text-center md:text-left">
+                              <h2 className="text-6xl font-black text-slate-900 mb-6 tracking-tighter">Performance: {gradingResult.score} XP</h2>
+                              <p className="text-slate-500 text-2xl italic leading-relaxed">"{gradingResult.feedbackSummary}"</p>
+                          </div>
+                      </div>
+                      
+                      <div className="grid md:grid-cols-2 gap-12 mb-20">
+                          <div className="bg-green-50 p-12 rounded-[3.5rem] border-4 border-green-100 shadow-sm">
+                              <h3 className="font-black text-green-700 mb-8 flex items-center gap-5 text-3xl"><CheckCircle size={40}/> Strategic Wins</h3>
+                              <ul className="space-y-6">
+                                  {gradingResult.strengths.map((item, i) => <li key={i} className="flex gap-5 text-xl text-slate-700 font-medium"><div className="w-8 h-8 rounded-full bg-green-200 flex items-center justify-center shrink-0 mt-1"><Check size={18} /></div>{item}</li>)}
+                              </ul>
+                          </div>
+                          <div className="bg-red-50 p-12 rounded-[3.5rem] border-4 border-red-100 shadow-sm">
+                              <h3 className="font-black text-red-700 mb-8 flex items-center gap-5 text-3xl"><AlertCircle size={40}/> Critical Gaps</h3>
+                               <ul className="space-y-6">
+                                  {gradingResult.weaknesses.length > 0 ? gradingResult.weaknesses.map((item, i) => <li key={i} className="flex gap-5 text-xl text-slate-700 font-medium"><div className="w-8 h-8 rounded-full bg-red-200 flex items-center justify-center shrink-0 mt-1"><X size={18} /></div>{item}</li>) : <li className="text-green-700 font-black text-3xl text-center py-10">Perfect Execution!</li>}
+                              </ul>
+                          </div>
+                      </div>
+
+                      <div className="mt-20 border-t-4 border-slate-50 pt-20">
+                        <div className="flex items-center gap-4 mb-16">
+                            <div className="w-16 h-16 bg-slate-900 text-white rounded-[1.5rem] flex items-center justify-center shadow-lg"><Database size={32} /></div>
+                            <div>
+                                <h3 className="text-5xl font-black text-slate-900 tracking-tighter">Service Architecture Brief</h3>
+                                <p className="text-slate-400 font-bold uppercase text-xs tracking-widest mt-2">TECHNICAL BREAKDOWN OF SUBMITTED ARCHITECTURE</p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-16">
+                            {blueprint.filter(col => col.phase.trim() !== '').map((col, index) => (
+                                <div key={col.id} className="bg-white rounded-[4rem] border-4 border-slate-50 overflow-hidden shadow-sm">
+                                    <div className="bg-slate-900 p-10 flex items-center gap-8">
+                                        <span className="w-16 h-16 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-black text-2xl shadow-lg shrink-0">{index + 1}</span>
+                                        <h4 className="text-4xl font-black text-white tracking-tight">{col.phase}</h4>
+                                    </div>
+
+                                    <div className="p-12 space-y-8">
+                                        {Object.keys(LAYER_INFO).map((layer) => (
+                                            <div key={layer} className="flex flex-col md:flex-row gap-6 md:items-start border-b border-slate-100 pb-8 last:border-0 last:pb-0">
+                                                <div className="w-full md:w-64 shrink-0">
+                                                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-2 flex items-center gap-3">
+                                                      <div className={`w-3 h-3 rounded-full ${LAYER_INFO[layer as keyof typeof LAYER_INFO].color.split(' ')[0]}`}></div>
+                                                      {LAYER_INFO[layer as keyof typeof LAYER_INFO].label}
+                                                    </span>
+                                                    <p className="text-[9px] text-slate-400 font-medium leading-tight md:pr-4">{LAYER_INFO[layer as keyof typeof LAYER_INFO].description}</p>
+                                                </div>
+                                                <div className={`flex-1 p-6 rounded-3xl border-2 font-medium text-slate-800 text-lg leading-relaxed ${LAYER_INFO[layer as keyof typeof LAYER_INFO].color.split(' ').slice(0, 2).join(' ')} border-opacity-20 shadow-inner`}>
+                                                    {col[layer as keyof BlueprintColumn] || <span className="text-slate-300 italic text-base">No documented action for this layer.</span>}
+                                                </div>
+                                            </div>
                                         ))}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                 <div className="p-8 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row gap-4 justify-center items-center" data-html2canvas-ignore>
-                    <button onClick={handleImproveWork} className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-2xl font-bold flex items-center gap-3 shadow-lg shadow-indigo-200 transition-all hover:scale-105 active:scale-95"><Pencil size={20} /> Refine Blueprint</button>
-                    <button onClick={handleDownloadPDF} className="bg-white border-2 border-gray-200 hover:border-slate-800 text-slate-700 px-6 py-4 rounded-2xl font-bold flex items-center gap-3 transition-all active:scale-95"><Download size={20} /> Export Evidence</button>
-                    <button onClick={resetApp} className="bg-white border-2 border-gray-200 hover:border-indigo-600 text-indigo-600 px-6 py-4 rounded-2xl font-bold flex items-center gap-3 transition-all active:scale-95"><RefreshCw size={20} /> New Mission</button>
-                </div>
-            </div>
 
-            {/* Hidden Ref for PDF Generation */}
-            <div ref={printRef} style={{ display: 'none' }}>
-                <div className="p-16 bg-white text-black">
-                    <h1 className="text-4xl font-black mb-4">Service Blueprint Performance Report</h1>
-                    <div className="mb-8 border-b-2 pb-4">
-                        <p><strong>Student:</strong> {studentName}</p>
-                        <p><strong>Team:</strong> {teamNumber}</p>
-                        <p><strong>Scenario:</strong> {selectedScenario?.title}</p>
-                        <p><strong>Grade:</strong> {gradingResult.letterGrade} ({gradingResult.score} XP)</p>
-                    </div>
-                    <div className="mb-12">
-                        <h2 className="text-2xl font-bold mb-2">Professor's Feedback</h2>
-                        <p className="italic mb-4">"{gradingResult.feedbackSummary}"</p>
-                    </div>
-                    
-                    {chunkBlueprint(blueprint, 4).map((chunk, idx) => (
-                        <div key={idx} className="mb-12">
-                            <h3 className="text-xl font-bold mb-4">Visualization Part {idx + 1}</h3>
-                            <table className="w-full border-collapse border border-gray-300 text-sm">
-                                <thead>
-                                    <tr>
-                                        <th className="border border-gray-300 p-2 bg-gray-100">Layer</th>
-                                        {chunk.map(col => <th key={col.id} className="border border-gray-300 p-2 bg-gray-100">{col.phase}</th>)}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {layers.map(layer => (
-                                        <tr key={layer}>
-                                            <td className="border border-gray-300 p-2 font-bold">{LAYER_INFO[layer as LayerType].label}</td>
-                                            {chunk.map(col => <td key={col.id} className="border border-gray-300 p-2">{col[layer]}</td>)}
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                        <div className="grid md:grid-cols-2 gap-10 pt-10 border-t-2 border-slate-50">
+                                            <div className="bg-red-50/50 p-8 rounded-3xl border-2 border-red-50">
+                                                <div className="flex items-center gap-3 mb-6">
+                                                    <AlertCircle size={24} className="text-red-500" />
+                                                    <span className="text-xs font-black uppercase text-red-600 tracking-widest">Pain Points</span>
+                                                </div>
+                                                <div className="space-y-3">
+                                                    {col.painPoints.length > 0 ? col.painPoints.map((p, i) => (
+                                                        <div key={i} className="bg-white px-5 py-3 rounded-2xl text-sm font-bold border border-red-100 text-red-700 shadow-sm flex gap-3"><span className="text-red-300">•</span> {p}</div>
+                                                    )) : <div className="text-slate-400 text-sm italic py-2">Optimal flow—no pain points detected.</div>}
+                                                </div>
+                                            </div>
+                                            <div className="bg-emerald-50/50 p-8 rounded-3xl border-2 border-emerald-50">
+                                                <div className="flex items-center gap-3 mb-6">
+                                                    <Zap size={24} className="text-emerald-500" />
+                                                    <span className="text-xs font-black uppercase text-emerald-600 tracking-widest">Growth Opportunities</span>
+                                                </div>
+                                                <div className="space-y-3">
+                                                    {col.opportunities.length > 0 ? col.opportunities.map((o, i) => (
+                                                        <div key={i} className="bg-white px-5 py-3 rounded-2xl text-sm font-bold border border-emerald-100 text-emerald-700 shadow-sm flex gap-3"><span className="text-emerald-300">•</span> {o}</div>
+                                                    )) : <div className="text-slate-400 text-sm italic py-2">Baseline service—no strategic improvements noted.</div>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
-                    ))}
-                </div>
-            </div>
-        </div>
-      )}
+                      </div>
+                  </div>
+
+                  <div className="p-16 bg-slate-900 border-t-8 border-white/5 flex flex-col sm:flex-row gap-8 justify-center items-center rounded-b-[4rem] shrink-0">
+                      <button type="button" onClick={handleImproveWork} className="bg-indigo-600 text-white px-12 py-6 rounded-[2.5rem] font-black flex items-center gap-4 shadow-2xl hover:scale-110 active:scale-95 text-xl transition-transform"><Pencil size={28} /> Refine Work</button>
+                      <button type="button" onClick={handleDownloadPDF} className="bg-slate-800 text-white px-10 py-6 rounded-[2.5rem] font-black flex items-center gap-4 hover:bg-slate-700 active:scale-95 text-xl transition-all"><Download size={28} /> Export Brief</button>
+                      <button type="button" onClick={handleGoHome} className="bg-white text-indigo-600 px-10 py-6 rounded-[2.5rem] font-black flex items-center gap-4 hover:border-indigo-600 active:scale-95 text-xl relative z-10 transition-all"><LayoutGrid size={28} /> Mission Control</button>
+                  </div>
+              </div>
+          </div>
+        )}
+      </main>
 
       {showCustomModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-10 relative animate-in zoom-in-95 duration-200">
-                 <button onClick={() => setShowCustomModal(false)} className="absolute top-6 right-6 text-gray-400 hover:text-gray-900 transition-all rounded-lg p-1">
-                    <X size={24} />
-                 </button>
-                 <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mb-6">
-                    <PenTool size={32} />
-                 </div>
-                 <h2 className="text-3xl font-black text-gray-900 mb-6">Create Custom Mission</h2>
-                 <div className="space-y-6">
-                    <div>
-                        <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-2 block">Mission Title</label>
-                        <input type="text" className="w-full p-4 border-2 border-gray-100 rounded-2xl bg-white text-gray-900 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 outline-none transition-all font-semibold" placeholder="e.g. Smart Home Installation" value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} />
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/90 backdrop-blur-xl animate-in fade-in duration-300">
+            <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-3xl p-16 relative">
+                 <button onClick={() => setShowCustomModal(false)} className="absolute top-12 right-12 text-slate-300 hover:text-slate-900 p-3 hover:bg-slate-100 rounded-full cursor-pointer transition-colors"><X size={44} /></button>
+                 <div className="w-24 h-24 bg-indigo-50 text-indigo-600 rounded-[2rem] flex items-center justify-center mb-10 border-4 border-indigo-100 shadow-inner"><PenTool size={48} /></div>
+                 <h2 className="text-5xl font-black text-slate-900 mb-12 tracking-tighter">Initialize Protocol</h2>
+                 <div className="space-y-12">
+                    <div className="bg-slate-50/50 p-6 rounded-[3rem] border-2 border-slate-100">
+                        <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-4 block ml-2">Simulation Codename</label>
+                        <input type="text" className="w-full p-8 rounded-[2rem] bg-white border-2 border-transparent focus:border-indigo-500 outline-none font-black text-2xl shadow-sm" placeholder="e.g. SMART RETAIL" value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} />
                     </div>
-                    <div>
-                        <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-2 block">Context & Constraints</label>
-                        <textarea className="w-full p-4 border-2 border-gray-100 rounded-2xl h-40 bg-white text-gray-900 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 outline-none transition-all resize-none font-medium text-sm leading-relaxed" placeholder="Describe the service environment..." value={customContext} onChange={(e) => setCustomContext(e.target.value)} />
+                    <div className="bg-slate-50/50 p-6 rounded-[3rem] border-2 border-slate-100">
+                        <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-4 block ml-2">Context & Constraints</label>
+                        <textarea className="w-full p-8 rounded-[2rem] h-64 bg-white border-2 border-transparent focus:border-indigo-500 outline-none resize-none font-black text-xl shadow-sm" placeholder="Environment, persona, challenges..." value={customContext} onChange={(e) => setCustomContext(e.target.value)} />
                     </div>
-                    <button onClick={handleCreateCustom} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black text-lg hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100">
-                        Initialize Mission
-                    </button>
+                    <button onClick={handleCreateCustom} className="w-full bg-slate-900 text-white py-10 rounded-[2.5rem] font-black text-2xl hover:bg-indigo-600 transition-all shadow-2xl active:scale-95 cursor-pointer">Confirm Simulation Data</button>
                  </div>
             </div>
         </div>

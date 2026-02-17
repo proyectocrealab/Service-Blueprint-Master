@@ -1,4 +1,5 @@
-import { BlueprintColumn, SavedBlueprint } from "../types";
+
+import { BlueprintColumn, SavedBlueprint, Scenario } from "../types";
 
 const STORAGE_KEY = 'service_blueprint_saves';
 
@@ -12,8 +13,8 @@ export const getSavedBlueprints = (): SavedBlueprint[] => {
   }
 };
 
-export const saveBlueprint = (name: string, scenarioId: string, blueprint: BlueprintColumn[], existingId?: string): SavedBlueprint => {
-  const saves = getSavedBlueprints();
+export const saveBlueprint = (name: string, scenario: Scenario, blueprint: BlueprintColumn[], existingId?: string): SavedBlueprint => {
+  let saves = getSavedBlueprints();
   let newSave: SavedBlueprint;
 
   if (existingId) {
@@ -23,16 +24,19 @@ export const saveBlueprint = (name: string, scenarioId: string, blueprint: Bluep
       newSave = {
         ...saves[existingIndex],
         name, // Allow renaming
+        scenario,
         blueprint,
         lastModified: Date.now()
       };
-      saves[existingIndex] = newSave;
+      // Move to top
+      saves.splice(existingIndex, 1);
+      saves.unshift(newSave);
     } else {
       // Fallback if ID not found
       newSave = {
         id: Date.now().toString(),
         name,
-        scenarioId,
+        scenario,
         blueprint,
         lastModified: Date.now()
       };
@@ -43,7 +47,7 @@ export const saveBlueprint = (name: string, scenarioId: string, blueprint: Bluep
     newSave = {
       id: Date.now().toString(),
       name,
-      scenarioId,
+      scenario,
       blueprint,
       lastModified: Date.now()
     };

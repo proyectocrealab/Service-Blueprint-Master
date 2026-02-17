@@ -1,9 +1,8 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { BlueprintColumn, GradingResult, Scenario } from "../types";
 
 // Helper to check if a column is functionally blank
-const isColumnBlank = (col: BlueprintColumn) => {
+export const isColumnBlank = (col: BlueprintColumn) => {
     return !col.physical.trim() && 
            !col.customer.trim() && 
            !col.frontstage.trim() && 
@@ -13,62 +12,17 @@ const isColumnBlank = (col: BlueprintColumn) => {
            col.opportunities.length === 0;
 };
 
-// Removed dynamic API key setter as per guidelines requiring process.env.API_KEY usage only.
-
-export const getMentorAdvice = async (
-  history: { role: 'user' | 'model'; parts: { text: string }[] }[],
-  currentBlueprint: BlueprintColumn[],
-  scenario: Scenario
-): Promise<string> => {
-  try {
-    // Initializing Gemini client with API_KEY from process.env as per guidelines.
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    
-    // Filter out blank columns for mentor context
-    const filteredBlueprint = currentBlueprint.filter(c => !isColumnBlank(c));
-
-    const systemInstruction = `
-      You are an encouraging and expert Service Design Professor.
-      The student is working on a Service Blueprint for the scenario: "${scenario.title}" - ${scenario.description}.
-      Context: ${scenario.context}.
-      
-      Your goal is to guide them. Do NOT give them the direct answers for every cell.
-      Instead, ask probing questions or give hints to help them uncover the answer.
-      
-      Current Blueprint State Summary:
-      ${JSON.stringify(filteredBlueprint.map(c => ({ phase: c.phase, customer: c.customer, front: c.frontstage })))}
-
-      Keep your responses concise (under 3 sentences usually) and friendly.
-    `;
-
-    const model = 'gemini-3-flash-preview';
-    const response = await ai.models.generateContent({
-      model,
-      contents: history,
-      config: {
-        systemInstruction,
-        temperature: 0.1, // Near deterministic for consistent advice
-      },
-    });
-
-    // Accessing .text property directly as per guidelines.
-    return response.text || "I'm having trouble thinking of advice right now. Try adding more details to your blueprint!";
-  } catch (error) {
-    console.error("Mentor Error:", error);
-    return "Professor AI is currently offline. Please check your connection and configuration.";
-  }
-};
-
+/**
+ * Grading logic to evaluate the student's submission.
+ * Each call creates a fresh AI instance to respect the latest user-provided API key.
+ */
 export const gradeBlueprint = async (
   blueprint: BlueprintColumn[],
   scenario: Scenario,
   previousResult?: GradingResult
 ): Promise<GradingResult> => {
   try {
-    // Initializing Gemini client with API_KEY from process.env as per guidelines.
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-    // Filter out columns that are essentially blank placeholders at the end
     const filteredBlueprint = blueprint.filter(c => !isColumnBlank(c));
 
     let modeInstruction = "";
@@ -113,8 +67,6 @@ export const gradeBlueprint = async (
       
       ${modeInstruction}
       
-      Generate a consistent, objective grade. Do not be overly generous or overly harsh. Be fair among different users.
-      
       Response JSON structure:
       {
         "score": integer,
@@ -127,11 +79,11 @@ export const gradeBlueprint = async (
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3-flash-preview', 
       contents: prompt,
       config: {
-        temperature: 0.0, // High determinism for fairness
-        seed: 42, // Consistent results for same input
+        temperature: 0.0,
+        seed: 42,
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
@@ -148,21 +100,60 @@ export const gradeBlueprint = async (
       }
     });
 
-    // Accessing .text property directly as per guidelines.
     const text = response.text;
     if (!text) throw new Error("No response from AI");
     const result = JSON.parse(text) as GradingResult;
     return { ...result, isRemediation: !!previousResult };
 
-  } catch (error) {
-    console.error("Grading Error:", error);
-    return {
-      score: 0,
-      letterGrade: 'N/A',
-      feedbackSummary: "A system error occurred. Please verify your connection.",
-      strengths: [],
-      weaknesses: ["System Error: Grade could not be calculated"],
-      tips: ["Ensure your environment is correctly configured."]
-    };
+  } catch (error: any) {
+    console.error("Grading Error Detail:", error);
+    // Specifically catch and re-throw quota errors for the UI to handle
+    if (error?.message?.includes('429') || error?.message?.includes('quota')) {
+      throw new Error("QUOTA_EXHAUSTED");
+    }
+    throw error;
+  }
+};
+
+/**
+ * Provides mentor advice based on chat history and current blueprint state.
+ */
+export const getMentorAdvice = async (
+  history: { role: 'user' | 'model'; parts: { text: string }[] }[],
+  blueprint: BlueprintColumn[],
+  scenario: Scenario
+): Promise<string> => {
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    const systemInstruction = `
+      You are a Service Design Mentor. Help the student build a Service Blueprint for the following scenario.
+      Scenario: ${scenario.title}
+      Context: ${scenario.context}
+      
+      Current Blueprint State (Filtered to non-blank):
+      ${JSON.stringify(blueprint.filter(c => !isColumnBlank(c)), null, 2)}
+      
+      Provide helpful, encouraging, and pedagogically sound advice. 
+      Focus on concepts like physical evidence, frontstage/backstage alignment, and identifying friction points.
+      Keep responses concise and professional.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: history,
+      config: {
+        systemInstruction: systemInstruction,
+        temperature: 0.7,
+      },
+    });
+
+    return response.text || "I'm sorry, I'm having trouble thinking right now. Please try again.";
+  } catch (error: any) {
+    console.error("Mentor Chat Error Detail:", error);
+    if (error?.message?.includes('429') || error?.message?.includes('quota')) {
+      return "Rate limit exceeded (429). Please wait a minute before asking for more advice, or switch to a project with higher quota.";
+    }
+    return "The Professor is currently unavailable. Please check your connection and API key settings.";
   }
 };
