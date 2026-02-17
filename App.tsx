@@ -501,8 +501,8 @@ const App: React.FC = () => {
                       <LayoutGrid size={28} />
                     </div>
                     <div>
-                      <h1 className="text-4xl font-black text-slate-900 tracking-tighter leading-none">Operations Hub</h1>
-                      <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mt-1">Personnel Service Terminal</p>
+                      <h1 className="text-4xl font-black text-slate-900 tracking-tighter leading-none">Service Blueprint Toolkit</h1>
+                      <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mt-1">Made by Arturo Zamora</p>
                     </div>
                   </div>
 
