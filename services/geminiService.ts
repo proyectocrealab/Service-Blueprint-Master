@@ -41,8 +41,11 @@ export const gradeBlueprint = async (
   previousResult?: GradingResult
 ): Promise<GradingResult> => {
   try {
-    // Create instance right before the call to ensure the latest key is used
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // Access the key through the process object which is shimmed in index.tsx
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) throw new Error("API_KEY_MISSING");
+
+    const ai = new GoogleGenAI({ apiKey });
     const filteredBlueprint = blueprint.filter(c => !isColumnBlank(c));
 
     let modeInstruction = "";
@@ -99,7 +102,7 @@ export const gradeBlueprint = async (
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview', 
+      model: 'gemini-3-flash-preview', 
       contents: prompt,
       config: {
         temperature: 0.0,
@@ -128,10 +131,14 @@ export const gradeBlueprint = async (
   } catch (error: any) {
     console.error("Grading Error:", error);
     const msg = error?.message || "";
-    // Classified error types to trigger specific UI logic
+    
+    // Explicit re-throwing for handled UI cases
     if (msg.includes('429') || msg.includes('quota')) throw new Error("QUOTA_EXHAUSTED");
     if (msg.includes('401') || msg.includes('403') || msg.includes('API key') || msg.includes('invalid')) throw new Error("INVALID_KEY");
     if (msg.includes('404') || msg.includes('not found') || msg.includes('Requested entity')) throw new Error("MODEL_NOT_FOUND");
+    if (msg === "API_KEY_MISSING") throw new Error("API_KEY_MISSING");
+    
+    // Rethrow original error with context for the App component to handle
     throw error;
   }
 };

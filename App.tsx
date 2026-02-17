@@ -377,8 +377,12 @@ const App: React.FC = () => {
           handleLogoutKey();
       } else if (msg === "QUOTA_EXHAUSTED") {
           alert("Uplink Overloaded (429): Free tier quota reached. Please wait 60 seconds before retrying.");
+      } else if (msg === "API_KEY_MISSING") {
+          alert("Uplink Session Lost: API Key not found in current environment. Please re-authenticate.");
+          handleLogoutKey();
       } else {
-          alert("Strategic analysis failed to initialize. Please check your uplink and try again.");
+          // Provide a more descriptive error for unknown issues
+          alert(`Strategic analysis failed: ${msg || "Unknown Connection Error"}. Please check your internet connection or try a different API key.`);
       }
     }
   };
