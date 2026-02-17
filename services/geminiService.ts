@@ -33,16 +33,15 @@ export const isColumnBlank = (col: BlueprintColumn) => {
 
 /**
  * Grading logic to evaluate the student's submission.
- * Each call creates a fresh AI instance to respect the latest user-provided API key.
+ * Accepts apiKey as a direct parameter to avoid race conditions or scope issues with global objects.
  */
 export const gradeBlueprint = async (
+  apiKey: string,
   blueprint: BlueprintColumn[],
   scenario: Scenario,
   previousResult?: GradingResult
 ): Promise<GradingResult> => {
   try {
-    // Access the key through the process object which is shimmed in index.tsx
-    const apiKey = process.env.API_KEY;
     if (!apiKey) throw new Error("API_KEY_MISSING");
 
     const ai = new GoogleGenAI({ apiKey });

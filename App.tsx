@@ -350,7 +350,8 @@ const App: React.FC = () => {
     setStage(AppStage.SUBMISSION);
     setIsGrading(true);
     try {
-      const result = await gradeBlueprint(blueprint, selectedScenario, gradingResult || undefined);
+      // Explicitly pass the key here to avoid reliance on global env shims in production
+      const result = await gradeBlueprint(currentApiKey, blueprint, selectedScenario, gradingResult || undefined);
       setGradingResult(result);
       
       saveBlueprint(
