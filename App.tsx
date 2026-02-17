@@ -1,11 +1,10 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AppStage, BlueprintColumn, GradingResult, Scenario, SavedBlueprint } from './types';
 import { SCENARIOS, EXAMPLE_BLUEPRINT, TUTORIAL_SCENARIO, LAYER_INFO } from './constants';
-import { gradeBlueprint } from './services/geminiService';
+import { gradeBlueprint, validateKey } from './services/geminiService';
 import { getSavedBlueprints, saveBlueprint, deleteBlueprint, exportAllData, importDataFromFile } from './services/storageService';
 import BlueprintBuilder from './components/BlueprintBuilder';
-import { ArrowRight, CheckCircle, Play, Clock, Loader2, X, PenTool, Sparkles, LayoutGrid, User, BookOpen, Download, Check, AlertCircle, Database, Activity, Info, ChevronRight, Save, Trash2, Upload, FileJson, Bookmark, Search, Filter, Trophy, Pencil, Zap } from 'lucide-react';
+import { ArrowRight, CheckCircle, Play, Clock, Loader2, X, PenTool, Sparkles, LayoutGrid, User, BookOpen, Download, Check, AlertCircle, Database, Activity, Info, ChevronRight, Save, Trash2, Upload, FileJson, Bookmark, Search, Filter, Trophy, Pencil, Zap, Key, ExternalLink, ShieldAlert, LogOut } from 'lucide-react';
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 
@@ -19,13 +18,22 @@ declare global {
   }
 }
 
+const STORAGE_API_KEY = 'SERVICE_BLUEPRINT_API_KEY';
+
+type AuthStatus = 'checking' | 'unauthorized' | 'authorized';
+
 const App: React.FC = () => {
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('checking');
+  const [currentApiKey, setCurrentApiKey] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [manualKey, setManualKey] = useState('');
+
   const [stage, setStage] = useState<AppStage>(AppStage.SCENARIO_SELECTION);
   const [selectedScenario, setSelectedScenario] = useState<Scenario | null>(null);
   const [blueprint, setBlueprint] = useState<BlueprintColumn[]>([]);
   const [gradingResult, setGradingResult] = useState<GradingResult | null>(null);
   const [isGrading, setIsGrading] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
   const [activeSaveId, setActiveSaveId] = useState<string | undefined>(undefined);
   
   const [studentName, setStudentName] = useState(localStorage.getItem('student_name') || '');
@@ -52,7 +60,6 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toastTimeoutRef = useRef<number | null>(null);
   
-  // Refs to always have the latest values for the auto-save interval
   const blueprintRef = useRef(blueprint);
   const selectedScenarioRef = useRef(selectedScenario);
   const activeSaveIdRef = useRef(activeSaveId);
@@ -63,23 +70,80 @@ const App: React.FC = () => {
   useEffect(() => { activeSaveIdRef.current = activeSaveId; }, [activeSaveId]);
   useEffect(() => { studentNameRef.current = studentName; }, [studentName]);
 
-  // Load saves on mount
+  /**
+   * Updates the global API key availability for the SDK
+   */
+  const updateGlobalApiKey = (key: string) => {
+    if (!(window as any).process) (window as any).process = { env: {} };
+    if (!(window as any).process.env) (window as any).process.env = {};
+    (window as any).process.env.API_KEY = key;
+  };
+
+  /**
+   * Robust key verification with multi-source fallback
+   */
+  const validateAndSetKey = async (key: string, persist = false) => {
+    setIsValidating(true);
+    setAuthError(null);
+    const isValid = await validateKey(key);
+    if (isValid) {
+      updateGlobalApiKey(key);
+      setCurrentApiKey(key);
+      if (persist) localStorage.setItem(STORAGE_API_KEY, key);
+      setAuthStatus('authorized');
+    } else {
+      setAuthError("Invalid API key or quota exceeded. Please check your key at AI Studio.");
+      setAuthStatus('unauthorized');
+    }
+    setIsValidating(false);
+  };
+
   useEffect(() => {
-    refreshSavedMissions();
-    
-    const checkConnection = async () => {
+    const initializeAuth = async () => {
+      // 1. Check LocalStorage
+      const storedKey = localStorage.getItem(STORAGE_API_KEY);
+      if (storedKey) {
+        const isValid = await validateKey(storedKey);
+        if (isValid) {
+          updateGlobalApiKey(storedKey);
+          setCurrentApiKey(storedKey);
+          setAuthStatus('authorized');
+          return;
+        } else {
+          localStorage.removeItem(STORAGE_API_KEY);
+        }
+      }
+
+      // 2. Check Environment Variable
+      const envKey = process.env.API_KEY;
+      if (envKey) {
+        const isValid = await validateKey(envKey);
+        if (isValid) {
+          updateGlobalApiKey(envKey);
+          setCurrentApiKey(envKey);
+          setAuthStatus('authorized');
+          return;
+        }
+      }
+
+      // 3. Check AI Studio Selection
       if (window.aistudio) {
         const hasKey = await window.aistudio.hasSelectedApiKey();
-        setIsConnected(hasKey);
-      } else {
-        // If not in AI Studio (e.g. Netlify), assume connected if API_KEY env is set
-        setIsConnected(!!process.env.API_KEY);
+        if (hasKey && process.env.API_KEY) {
+          updateGlobalApiKey(process.env.API_KEY);
+          setCurrentApiKey(process.env.API_KEY);
+          setAuthStatus('authorized');
+          return;
+        }
       }
+
+      setAuthStatus('unauthorized');
     };
-    checkConnection();
+
+    initializeAuth();
+    refreshSavedMissions();
   }, []);
 
-  // AUTO-SAVE SYSTEM: Executes every 60 seconds when building
   useEffect(() => {
     if (stage !== AppStage.BLUEPRINT_BUILDER || isTutorialMode) {
       setAutoSaveStatus('idle');
@@ -88,7 +152,6 @@ const App: React.FC = () => {
 
     const performAutoSave = () => {
       if (!selectedScenarioRef.current) return;
-
       setAutoSaveStatus('saving');
       try {
         const currentName = activeSaveIdRef.current 
@@ -101,43 +164,31 @@ const App: React.FC = () => {
           selectedScenarioRef.current,
           blueprintRef.current,
           activeSaveIdRef.current,
-          false,
-          undefined // No score on auto-save
+          false
         );
 
-        if (!activeSaveIdRef.current) {
-          setActiveSaveId(saved.id);
-        }
-        
+        if (!activeSaveIdRef.current) setActiveSaveId(saved.id);
         setLastAutoSaveTime(new Date());
         setAutoSaveStatus('success');
         refreshSavedMissions();
-      } catch (err) {
-        console.error("Auto-save failed:", err);
-        setAutoSaveStatus('error');
-      }
+      } catch (err) { setAutoSaveStatus('error'); }
     };
 
-    const interval = setInterval(performAutoSave, 60000); // 60 Seconds
+    const interval = setInterval(performAutoSave, 60000);
     return () => clearInterval(interval);
   }, [stage, isTutorialMode]);
 
-  const refreshSavedMissions = () => {
-    const saves = getSavedBlueprints();
-    setSavedMissions(saves);
-  };
+  const refreshSavedMissions = () => setSavedMissions(getSavedBlueprints());
 
-  useEffect(() => {
-    localStorage.setItem('student_name', studentName);
-  }, [studentName]);
+  useEffect(() => { localStorage.setItem('student_name', studentName); }, [studentName]);
 
-  const handleAuthorize = async () => {
-    if (window.aistudio) {
-      await window.aistudio.openSelectKey();
-      setIsConnected(true);
-    } else {
-      alert("System Note: Security Uplink is managed via environment variables in this deployment.");
-    }
+  const handleLogoutKey = () => {
+    localStorage.removeItem(STORAGE_API_KEY);
+    setCurrentApiKey(null);
+    setAuthStatus('unauthorized');
+    // Clear global key too
+    if ((window as any).process?.env) (window as any).process.env.API_KEY = "";
+    setStage(AppStage.SCENARIO_SELECTION);
   };
 
   const resetApp = useCallback(() => {
@@ -159,38 +210,23 @@ const App: React.FC = () => {
   }, []);
 
   const handleGoHome = useCallback((e?: React.MouseEvent | React.KeyboardEvent) => {
-    if (e && 'preventDefault' in e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    
-    const isBuilderActive = stage === AppStage.BLUEPRINT_BUILDER && !isTutorialMode;
-    if (isBuilderActive) {
-      if (window.confirm("Abort Mission? Unsaved progress will be lost. Use 'Log Archive' to preserve your work.")) {
-        resetApp();
-      }
-    } else {
-      resetApp();
-    }
+    if (e && 'preventDefault' in e) { e.preventDefault(); e.stopPropagation(); }
+    if (stage === AppStage.BLUEPRINT_BUILDER && !isTutorialMode) {
+      if (window.confirm("Abort Mission? Unsaved progress will be lost. Use 'Log Archive' to preserve your work.")) resetApp();
+    } else { resetApp(); }
   }, [stage, isTutorialMode, resetApp]);
 
-  const handleUpdateScenario = (updated: Scenario) => {
-    setSelectedScenario(updated);
-  };
+  const handleUpdateScenario = (updated: Scenario) => setSelectedScenario(updated);
 
   const handleSaveCurrent = () => {
     if (!selectedScenario) return;
-    
     const existingName = activeSaveId ? savedMissions.find(m => m.id === activeSaveId)?.name : '';
     const name = prompt("Operation Name:", existingName || `Draft: ${selectedScenario.title} - ${new Date().toLocaleTimeString()}`);
-    
     if (name) {
       const saved = saveBlueprint(name, studentName, selectedScenario, blueprint, activeSaveId, false, gradingResult?.score);
       setActiveSaveId(saved.id);
       setLastSavedName(name);
       refreshSavedMissions();
-      
-      // Show non-intrusive toast
       setShowSaveToast(true);
       if (toastTimeoutRef.current) window.clearTimeout(toastTimeoutRef.current);
       toastTimeoutRef.current = window.setTimeout(() => setShowSaveToast(false), 5000);
@@ -221,22 +257,15 @@ const App: React.FC = () => {
   };
 
   const handleDeleteMission = (e: React.MouseEvent, id: string) => {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     if (window.confirm("Permanent erasure of this mission log? This cannot be undone.")) {
       deleteBlueprint(id);
       refreshSavedMissions();
     }
   };
 
-  const handleExportBackup = () => {
-    exportAllData();
-  };
-
-  const handleImportBackup = () => {
-    fileInputRef.current?.click();
-  };
-
+  const handleExportBackup = () => exportAllData();
+  const handleImportBackup = () => fileInputRef.current?.click();
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -244,17 +273,11 @@ const App: React.FC = () => {
         await importDataFromFile(file);
         refreshSavedMissions();
         alert("Archive synchronized successfully.");
-      } catch (err) {
-        alert("Synchronization failed: Invalid archive file.");
-      }
+      } catch (err) { alert("Synchronization failed: Invalid archive file."); }
     }
   };
 
   const startScenario = (scenario: Scenario) => {
-    if (!isConnected) {
-      handleAuthorize();
-      return;
-    }
     setSelectedScenario(scenario);
     setIsTutorialMode(false);
     setGradingResult(null); 
@@ -315,30 +338,14 @@ const App: React.FC = () => {
   };
 
   const handleSubmission = async () => {
-    if (!selectedScenario) return;
-
-    // VALIDATION: Ensure student name is present before analysis
+    if (!selectedScenario || !currentApiKey) {
+      if (!currentApiKey) setAuthStatus('unauthorized');
+      return;
+    }
     if (!studentName.trim()) {
       alert("Protocol Error: Student Name (Lead Designer) must be defined before strategic analysis can proceed.");
       return;
     }
-
-    // Auto-save progress before submission to ensure archive is updated
-    const autoName = activeSaveId 
-      ? savedMissions.find(m => m.id === activeSaveId)?.name 
-      : `${selectedScenario.title} - ${new Date().toLocaleTimeString()}`;
-    
-    const preSave = saveBlueprint(
-      autoName || 'Submitted Blueprint',
-      studentName,
-      selectedScenario,
-      blueprint,
-      activeSaveId,
-      false,
-      undefined 
-    );
-    setActiveSaveId(preSave.id);
-    refreshSavedMissions();
 
     setStage(AppStage.SUBMISSION);
     setIsGrading(true);
@@ -347,11 +354,11 @@ const App: React.FC = () => {
       setGradingResult(result);
       
       saveBlueprint(
-        autoName || 'Completed Blueprint',
+        (activeSaveId ? savedMissions.find(m => m.id === activeSaveId)?.name : null) || `${selectedScenario.title} - Final`,
         studentName,
         selectedScenario,
         blueprint,
-        preSave.id,
+        activeSaveId,
         false,
         result.score
       );
@@ -363,13 +370,15 @@ const App: React.FC = () => {
     } catch (e: any) {
       setIsGrading(false);
       setStage(AppStage.BLUEPRINT_BUILDER);
-      if (e?.message === "QUOTA_EXHAUSTED" || e?.message?.includes('429')) {
-          alert("Rate Limit Exceeded (429). Please wait 60 seconds.");
-      } else if (e?.message?.includes("Requested entity was not found")) {
-          setIsConnected(false);
-          alert("API Key expired or invalid.");
+      const msg = e?.message || "";
+      
+      if (msg === "INVALID_KEY") {
+          alert(`Authentication Error: Your key is restricted or unauthorized. Please re-validate your uplink.`);
+          handleLogoutKey();
+      } else if (msg === "QUOTA_EXHAUSTED") {
+          alert("Uplink Overloaded (429): Free tier quota reached. Please wait 60 seconds before retrying.");
       } else {
-          alert("Submission failed. Try again in a moment.");
+          alert("Strategic analysis failed to initialize. Please check your uplink and try again.");
       }
     }
   };
@@ -402,25 +411,107 @@ const App: React.FC = () => {
 
   const filteredObjectives = useMemo(() => {
     let list = [...SCENARIOS];
-    if (filterDifficulty !== 'All') {
-      list = list.filter(s => s.difficulty === filterDifficulty);
-    }
-    if (searchQuery) {
-      list = list.filter(s => s.title.toLowerCase().includes(searchQuery.toLowerCase()) || s.description.toLowerCase().includes(searchQuery.toLowerCase()));
-    }
+    if (filterDifficulty !== 'All') list = list.filter(s => s.difficulty === filterDifficulty);
+    if (searchQuery) list = list.filter(s => s.title.toLowerCase().includes(searchQuery.toLowerCase()) || s.description.toLowerCase().includes(searchQuery.toLowerCase()));
     return list;
   }, [searchQuery, filterDifficulty]);
 
   const filteredArchives = useMemo(() => {
     let list = [...savedMissions];
-    if (searchQuery) {
-      list = list.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.scenario.title.toLowerCase().includes(searchQuery.toLowerCase()));
-    }
+    if (searchQuery) list = list.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.scenario.title.toLowerCase().includes(searchQuery.toLowerCase()));
     return list;
   }, [searchQuery, savedMissions]);
 
   const archiveCount = savedMissions.length;
 
+  // Gatekeeper: Authorization View
+  if (authStatus === 'checking') {
+    return (
+      <div className="min-h-screen bg-[#1a2130] flex flex-col items-center justify-center p-8">
+        <Loader2 className="animate-spin text-indigo-500 mb-6" size={64} />
+        <h2 className="text-white font-black text-2xl tracking-tighter uppercase">Initializing Strategic Uplink...</h2>
+        <p className="text-slate-400 text-sm mt-2">Verifying authorization protocols</p>
+      </div>
+    );
+  }
+
+  if (authStatus === 'unauthorized') {
+    return (
+      <div className="min-h-screen bg-[#1a2130] flex flex-col items-center justify-center p-6 relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-indigo-500 rounded-full blur-[120px]"></div>
+        </div>
+
+        <div className="max-w-md w-full bg-white rounded-[3rem] p-12 shadow-2xl relative z-10 border border-white/20 animate-in zoom-in-95 duration-500">
+           <div className="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-[2rem] flex items-center justify-center mb-8 shadow-inner mx-auto border-2 border-indigo-100">
+              <Key size={40} strokeWidth={2.5} />
+           </div>
+           
+           <h1 className="text-3xl font-black text-slate-900 text-center mb-2 tracking-tighter">Unlock Toolkit</h1>
+           <p className="text-slate-500 text-center text-sm mb-10 leading-relaxed font-medium">Please provide a valid Gemini API Key to access the service design strategic workspace.</p>
+           
+           <div className="space-y-6">
+              <div className="space-y-2">
+                <div className="flex justify-between items-center px-2">
+                   <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Manual API Key Entry</label>
+                   <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[10px] font-black uppercase text-indigo-600 flex items-center gap-1 hover:underline">
+                      Get Key <ExternalLink size={10} />
+                   </a>
+                </div>
+                <div className="relative group">
+                   <input 
+                      type="password" 
+                      value={manualKey}
+                      onChange={(e) => setManualKey(e.target.value)}
+                      placeholder="Enter your Gemini API key..."
+                      className="w-full p-4 pr-12 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-400 focus:bg-white outline-none font-mono text-xs transition-all shadow-inner text-black"
+                   />
+                   <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300">
+                      <Key size={16} />
+                   </div>
+                </div>
+              </div>
+
+              {authError && (
+                <div className="p-4 bg-red-50 rounded-2xl border border-red-100 flex gap-3 items-start animate-in slide-in-from-top-2">
+                  <ShieldAlert className="text-red-500 shrink-0 mt-0.5" size={16} />
+                  <p className="text-red-700 text-xs font-bold leading-relaxed">{authError}</p>
+                </div>
+              )}
+
+              <button 
+                onClick={() => validateAndSetKey(manualKey, true)}
+                disabled={!manualKey.trim() || isValidating}
+                className="w-full bg-[#1a2130] text-white py-4 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-xl active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
+              >
+                {isValidating ? <Loader2 className="animate-spin" size={18} /> : <>Initialize Uplink <ArrowRight size={18} /></>}
+              </button>
+
+              {window.aistudio && (
+                <button 
+                  onClick={async () => {
+                    await window.aistudio.openSelectKey();
+                    // Assume success to proceed to the app as per guidelines race-condition mitigation
+                    setAuthStatus('authorized');
+                    if (process.env.API_KEY) {
+                      updateGlobalApiKey(process.env.API_KEY);
+                      setCurrentApiKey(process.env.API_KEY);
+                    }
+                  }}
+                  className="w-full bg-white border-2 border-slate-100 text-slate-600 py-4 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-slate-50 transition-all active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <LayoutGrid size={18} /> Use AI Studio Selection
+                </button>
+              )}
+           </div>
+        </div>
+        
+        <p className="mt-8 text-slate-500 text-[10px] font-bold uppercase tracking-[0.2em] relative z-10">Secured Strategic Session v2.0</p>
+      </div>
+    );
+  }
+
+  // Standard Render
   return (
     <div className="font-sans text-slate-900 selection:bg-indigo-100 min-h-screen bg-slate-50 flex flex-col">
       <input type="file" ref={fileInputRef} onChange={onFileChange} style={{ display: 'none' }} accept=".json" />
@@ -469,7 +560,6 @@ const App: React.FC = () => {
         </nav>
       )}
 
-      {/* NON-INTRUSIVE TOAST NOTIFICATION */}
       {showSaveToast && (
         <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[300] w-full max-w-lg px-4 animate-in slide-in-from-top-12 duration-500 pointer-events-none">
           <div className="bg-[#1a2130] text-white p-4 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-white/10 flex items-center justify-between gap-6 pointer-events-auto">
@@ -505,7 +595,6 @@ const App: React.FC = () => {
         {stage === AppStage.SCENARIO_SELECTION && (
           <div className="p-8 pb-24 animate-in fade-in duration-500">
             <div className="max-w-7xl mx-auto">
-              {/* Profile Header */}
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12 border-b-4 border-slate-200 pb-10">
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
@@ -523,9 +612,8 @@ const App: React.FC = () => {
                       <input type="text" value={studentName} onChange={(e) => setStudentName(e.target.value)} placeholder="Student Name" className="bg-transparent font-bold text-xs w-32 outline-none" />
                     </div>
                     
-                    <button onClick={handleAuthorize} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 font-bold text-[11px] tracking-wide uppercase shadow-sm transition-all active:scale-95 ${isConnected ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600 animate-pulse'}`}>
-                      <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-amber-500'}`}></div>
-                      {isConnected ? 'Uplink Ready' : 'Authorize Uplink'}
+                    <button onClick={handleLogoutKey} className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-slate-100 bg-white font-bold text-[11px] tracking-wide uppercase shadow-sm transition-all active:scale-95 text-slate-600 hover:border-red-100 hover:text-red-600">
+                      <LogOut size={16} /> Logout Key
                     </button>
 
                     <button onClick={startTutorial} className="bg-indigo-600 text-white px-7 py-3 rounded-xl font-black flex items-center gap-2 shadow-xl hover:scale-105 active:scale-95 text-[11px] uppercase tracking-widest transition-transform">
@@ -534,9 +622,7 @@ const App: React.FC = () => {
                   </div>
               </div>
 
-              {/* Top Row: Custom Mission & Backup */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-16">
-                  {/* Custom Card */}
                   <div className="lg:col-span-2 bg-slate-900 rounded-[3rem] p-12 relative overflow-hidden group shadow-2xl border border-slate-800 transition-all hover:border-indigo-500/50">
                       <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-bl-full pointer-events-none"></div>
                       <PenTool className="text-indigo-400 mb-8" size={56} />
@@ -545,7 +631,6 @@ const App: React.FC = () => {
                       <button onClick={() => setShowCustomModal(true)} className="bg-indigo-600 text-white px-10 py-4 rounded-2xl font-black shadow-2xl hover:bg-indigo-500 active:scale-95 text-lg transition-all">Start Protocol</button>
                   </div>
 
-                  {/* Backup Card */}
                   <div className="bg-white rounded-[3rem] p-10 shadow-xl border-4 border-slate-100 flex flex-col justify-between">
                       <div>
                         <FileJson className="text-slate-300 mb-6" size={48} />
@@ -559,9 +644,7 @@ const App: React.FC = () => {
                   </div>
               </div>
 
-              {/* Mission Library Interface */}
               <div className="bg-white rounded-[4rem] p-10 lg:p-16 shadow-2xl border border-slate-100 min-h-[600px] flex flex-col">
-                  {/* Filters & Tabs */}
                   <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-8 mb-12">
                       <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-2xl self-start">
                           <button onClick={() => setLibraryTab('objectives')} className={`px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${libraryTab === 'objectives' ? 'bg-white text-slate-900 shadow-md' : 'text-slate-500 hover:text-slate-700'}`}>
@@ -600,10 +683,8 @@ const App: React.FC = () => {
                       </div>
                   </div>
 
-                  {/* Objective Grid */}
                   {libraryTab === 'objectives' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                      {/* Expert Model Special Card */}
                       <div onClick={handleLoadExample} className="bg-indigo-700 rounded-[3rem] p-10 text-white shadow-xl hover:scale-[1.02] active:scale-95 transition-all cursor-pointer relative overflow-hidden group border-4 border-indigo-600 flex flex-col justify-between">
                           <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-bl-full pointer-events-none"></div>
                           <div>
@@ -638,12 +719,10 @@ const App: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Mission Archive Grid */}
                   {libraryTab === 'archives' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                       {filteredArchives.map((mission) => (
                         <div key={mission.id} onClick={() => handleLoadMission(mission)} className="bg-white rounded-[3rem] p-10 border-4 border-slate-100 hover:border-indigo-400 hover:shadow-2xl transition-all cursor-pointer group relative overflow-hidden flex flex-col h-full min-h-[360px]">
-                          {/* Completion Progress Bar */}
                           <div className="absolute top-0 left-0 right-0 h-1.5 bg-slate-50">
                             <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${mission.completionRate || 0}%` }}></div>
                           </div>
@@ -845,7 +924,6 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Custom Mission Modal */}
       {showCustomModal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/90 backdrop-blur-xl animate-in fade-in duration-300">
             <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-3xl p-16 relative">

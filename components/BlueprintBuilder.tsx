@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect } from 'react';
 import { BlueprintColumn, LayerType, Scenario, GradingResult } from '../types';
 import { LAYER_INFO, TUTORIAL_STEPS } from '../constants';
-import { Plus, Trash2, Zap, AlertTriangle, ArrowRight, RotateCcw, X, ClipboardList, Move, Info, Pencil, Cloud, CloudUpload, CloudOff, Save, Home, User } from 'lucide-react';
+import { Plus, Trash2, Zap, AlertTriangle, RotateCcw, X, ClipboardList, Move, Info, Pencil, Cloud, CloudUpload, CloudOff, Save, User } from 'lucide-react';
 import TutorialOverlay from './TutorialOverlay';
 
 interface BlueprintBuilderProps {
@@ -210,6 +209,7 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
         </>
       )}
 
+      {/* Trash Can functionality preserved exactly as requested */}
       {!isTutorial && (
         <div 
           onDragOver={(e) => { e.preventDefault(); setIsOverTrash(true); }}
@@ -223,7 +223,7 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
         </div>
       )}
 
-      {/* Sub-Header: Mission Tools. Sticky is relative to the builder container */}
+      {/* Sub-Header: Mission Tools */}
       <div className="bg-[#f8f9fb] border-b border-slate-200 px-8 py-3 flex justify-between items-center shadow-sm sticky top-0 z-40 shrink-0">
         <div className="flex items-center gap-6">
           <button onClick={() => setShowScenarioBrief(!showScenarioBrief)} className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 font-bold text-[10px] uppercase tracking-[0.2em] transition-colors cursor-pointer group">
@@ -233,7 +233,6 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
             Brief
           </button>
 
-          {/* MANUAL SAVE ACTION */}
           {!isTutorial && onSave && (
             <button onClick={onSave} className="flex items-center gap-2 text-slate-500 hover:text-emerald-600 font-bold text-[10px] uppercase tracking-[0.2em] transition-colors cursor-pointer group">
               <div className="bg-slate-200 p-1.5 rounded-lg group-hover:bg-emerald-100 transition-colors">
@@ -243,7 +242,6 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
             </button>
           )}
 
-          {/* AUTO-SAVE INDICATOR */}
           {!isTutorial && (
             <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl border border-slate-100 bg-white shadow-sm">
                 {autoSaveStatus === 'saving' ? (

@@ -1,4 +1,3 @@
-
 export type LayerType = 'physical' | 'customer' | 'frontstage' | 'backstage' | 'support';
 
 export interface BlueprintColumn {
@@ -53,10 +52,4 @@ export enum AppStage {
   SUBMISSION,
   RESULTS,
   PROJECT_ARCHIVE
-}
-
-export interface ChatMessage {
-  id: string;
-  sender: 'user' | 'ai';
-  text: string;
 }

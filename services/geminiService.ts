@@ -1,6 +1,24 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { BlueprintColumn, GradingResult, Scenario } from "../types";
+
+/**
+ * Validates an API key by making a minimal test call to ensure it is active and has quota.
+ */
+export const validateKey = async (key: string): Promise<boolean> => {
+  try {
+    const ai = new GoogleGenAI({ apiKey: key });
+    // Minimal test call to verify key functionality
+    await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: 'test',
+      config: { maxOutputTokens: 2 }
+    });
+    return true;
+  } catch (error) {
+    console.error("API Key Validation Failed:", error);
+    return false;
+  }
+};
 
 // Helper to check if a column is functionally blank
 export const isColumnBlank = (col: BlueprintColumn) => {
@@ -23,8 +41,7 @@ export const gradeBlueprint = async (
   previousResult?: GradingResult
 ): Promise<GradingResult> => {
   try {
-    // Initializing Gemini client with named parameter apiKey as per guidelines.
-    // Use process.env.API_KEY directly which is injected automatically.
+    // Create instance right before the call to ensure the latest key is used
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const filteredBlueprint = blueprint.filter(c => !isColumnBlank(c));
 
@@ -81,7 +98,6 @@ export const gradeBlueprint = async (
       }
     `;
 
-    // Using gemini-3-pro-preview for complex reasoning task (grading blueprints)
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview', 
       contents: prompt,
@@ -105,66 +121,17 @@ export const gradeBlueprint = async (
     });
 
     const text = response.text;
-    if (!text) throw new Error("No response from AI");
+    if (!text) throw new Error("EMPTY_RESPONSE");
     const result = JSON.parse(text) as GradingResult;
     return { ...result, isRemediation: !!previousResult };
 
   } catch (error: any) {
-    console.error("Grading Error Detail:", error);
-    // Specifically catch and re-throw quota errors for the UI to handle
-    if (error?.message?.includes('429') || error?.message?.includes('quota')) {
-      throw new Error("QUOTA_EXHAUSTED");
-    }
+    console.error("Grading Error:", error);
+    const msg = error?.message || "";
+    // Classified error types to trigger specific UI logic
+    if (msg.includes('429') || msg.includes('quota')) throw new Error("QUOTA_EXHAUSTED");
+    if (msg.includes('401') || msg.includes('403') || msg.includes('API key') || msg.includes('invalid')) throw new Error("INVALID_KEY");
+    if (msg.includes('404') || msg.includes('not found') || msg.includes('Requested entity')) throw new Error("MODEL_NOT_FOUND");
     throw error;
-  }
-};
-
-/**
- * Provides conversational advice to the student based on their current blueprint and chat history.
- * Each call creates a fresh AI instance to respect the latest user-provided API key.
- */
-export const getMentorAdvice = async (
-  history: { role: 'user' | 'model'; parts: { text: string }[] }[],
-  blueprint: BlueprintColumn[],
-  scenario: Scenario
-): Promise<string> => {
-  try {
-    // Create fresh instance to use latest API key from env
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const filteredBlueprint = blueprint.filter(c => !isColumnBlank(c));
-
-    const systemInstruction = `
-      You are Professor AI, a world-class Service Design Mentor. 
-      The student is working on a Service Blueprint for the scenario: "${scenario.title}".
-      Context: ${scenario.context}
-      
-      Current Blueprint State (Non-blank phases):
-      ${JSON.stringify(filteredBlueprint, null, 2)}
-      
-      Guidelines:
-      1. Be encouraging but rigorous.
-      2. Use Service Design terminology (Frontstage, Backstage, Support Processes, Physical Evidence).
-      3. Help the student identify missing connections between layers.
-      4. Provide specific examples relevant to "${scenario.title}".
-      5. Keep responses concise and conversational.
-    `;
-
-    // Using gemini-3-flash-preview for quick conversational Q&A as per guidelines for Basic Text Tasks
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: history,
-      config: {
-        systemInstruction,
-        temperature: 0.7,
-      }
-    });
-
-    return response.text || "I'm sorry, I'm having trouble thinking right now. Could you rephrase your question?";
-  } catch (error: any) {
-    console.error("Mentor Service Error:", error);
-    if (error?.message?.includes('429') || error?.message?.includes('quota')) {
-      return "I'm a bit overwhelmed with students right now (Rate limit reached). Please wait a moment before asking again.";
-    }
-    return "I'm having a technical glitch. Please try again in a few seconds.";
   }
 };
