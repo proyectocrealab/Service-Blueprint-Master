@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { BlueprintColumn, LayerType, Scenario, GradingResult } from '../types';
 import { LAYER_INFO, TUTORIAL_STEPS } from '../constants';
-import { Plus, Trash2, Zap, AlertTriangle, ArrowRight, RotateCcw, X, ClipboardList, Move, Info } from 'lucide-react';
+import { Plus, Trash2, Zap, AlertTriangle, ArrowRight, RotateCcw, X, ClipboardList, Move, Info, Pencil, Cloud, CloudUpload, CloudOff, Save } from 'lucide-react';
 import TutorialOverlay from './TutorialOverlay';
 
 interface BlueprintBuilderProps {
@@ -14,6 +15,10 @@ interface BlueprintBuilderProps {
   onBackToControl?: (e?: React.MouseEvent) => void;
   onExport?: () => void;
   previousGradingResult?: GradingResult | null;
+  onUpdateScenario?: (updated: Scenario) => void;
+  onSave?: () => void;
+  autoSaveStatus?: 'idle' | 'saving' | 'success' | 'error';
+  lastAutoSaveTime?: Date | null;
 }
 
 type DragType = 'column' | 'cell';
@@ -33,7 +38,11 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
     onTutorialComplete,
     onBackToControl,
     onExport,
-    previousGradingResult
+    previousGradingResult,
+    onUpdateScenario,
+    onSave,
+    autoSaveStatus = 'idle',
+    lastAutoSaveTime
 }) => {
   const [tutorialStep, setTutorialStep] = useState(0);
   const [showFeedback, setShowFeedback] = useState(false);
@@ -41,11 +50,21 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
   const [isOverTrash, setIsOverTrash] = useState(false);
   const [showScenarioBrief, setShowScenarioBrief] = useState(false);
 
+  // Editable Scenario States
+  const [editScenarioTitle, setEditScenarioTitle] = useState(scenario.title);
+  const [editScenarioContext, setEditScenarioContext] = useState(scenario.context);
+
   const [showAnalysisModal, setShowAnalysisModal] = useState(false);
   const [analysisModalData, setAnalysisModalData] = useState<{columnId: string, type: 'painPoints' | 'opportunities'} | null>(null);
   const [analysisInput, setAnalysisInput] = useState('');
 
   const layers: LayerType[] = ['physical', 'customer', 'frontstage', 'backstage', 'support'];
+
+  // Sync state if scenario prop changes
+  useEffect(() => {
+    setEditScenarioTitle(scenario.title);
+    setEditScenarioContext(scenario.context);
+  }, [scenario.id, scenario.title, scenario.context]);
 
   const updateCell = (columnId: string, layer: keyof BlueprintColumn, value: string) => {
     setBlueprint(prev => prev.map(col => col.id === columnId ? { ...col, [layer]: value } : col));
@@ -53,6 +72,17 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
 
   const updatePhaseName = (columnId: string, name: string) => {
     setBlueprint(prev => prev.map(col => col.id === columnId ? { ...col, phase: name } : col));
+  };
+
+  const handleUpdateBrief = () => {
+    if (onUpdateScenario) {
+      onUpdateScenario({
+        ...scenario,
+        title: editScenarioTitle,
+        context: editScenarioContext
+      });
+    }
+    setShowScenarioBrief(false);
   };
 
   const addColumn = () => {
@@ -166,11 +196,48 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
       )}
 
       {/* Sub-Header: Mission Tools. Sticky is relative to the builder container */}
-      <div className="bg-white/95 backdrop-blur-sm border-b px-8 py-3 flex justify-between items-center shadow-sm sticky top-0 z-40 shrink-0">
-        <div className="flex items-center gap-4">
-          <button onClick={() => setShowScenarioBrief(!showScenarioBrief)} className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 font-bold text-xs uppercase tracking-widest transition-colors cursor-pointer">
-            <Info size={16} /> Brief
+      <div className="bg-[#f8f9fb] border-b border-slate-200 px-8 py-3 flex justify-between items-center shadow-sm sticky top-0 z-40 shrink-0">
+        <div className="flex items-center gap-6">
+          <button onClick={() => setShowScenarioBrief(!showScenarioBrief)} className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 font-bold text-[10px] uppercase tracking-[0.2em] transition-colors cursor-pointer group">
+            <div className="bg-slate-200 p-1.5 rounded-lg group-hover:bg-indigo-100 transition-colors">
+              <Info size={14} className="group-hover:text-indigo-600" />
+            </div>
+            Brief
           </button>
+
+          {/* MANUAL SAVE ACTION */}
+          {!isTutorial && onSave && (
+            <button onClick={onSave} className="flex items-center gap-2 text-slate-500 hover:text-emerald-600 font-bold text-[10px] uppercase tracking-[0.2em] transition-colors cursor-pointer group">
+              <div className="bg-slate-200 p-1.5 rounded-lg group-hover:bg-emerald-100 transition-colors">
+                <Save size={14} className="group-hover:text-emerald-600" />
+              </div>
+              Archive
+            </button>
+          )}
+
+          {/* AUTO-SAVE INDICATOR */}
+          {!isTutorial && (
+            <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl border border-slate-100 bg-white shadow-sm">
+                {autoSaveStatus === 'saving' ? (
+                  <CloudUpload size={14} className="text-indigo-500 animate-bounce" />
+                ) : autoSaveStatus === 'error' ? (
+                  <CloudOff size={14} className="text-red-500" />
+                ) : (
+                  <Cloud size={14} className="text-emerald-500" />
+                )}
+                <div className="flex flex-col">
+                  <span className={`text-[8px] font-black uppercase tracking-widest ${autoSaveStatus === 'error' ? 'text-red-500' : 'text-slate-400'}`}>
+                    {autoSaveStatus === 'saving' ? 'Syncing...' : autoSaveStatus === 'error' ? 'Sync Failed' : 'Synced'}
+                  </span>
+                  {lastAutoSaveTime && (
+                    <span className="text-[7px] font-bold text-slate-300 leading-none">
+                      {lastAutoSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                </div>
+            </div>
+          )}
+
           {previousGradingResult && (
             <button onClick={() => setShowFeedback(true)} className="bg-amber-100 text-amber-700 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-amber-200 shadow-sm animate-pulse cursor-pointer">
                 <ClipboardList size={14} /> Remediation Tasks ({previousGradingResult.weaknesses.length})
@@ -180,7 +247,7 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
         
         {!isTutorial && (
             <div className="flex items-center gap-2">
-                <button onClick={handleReset} className="text-slate-400 hover:text-red-500 p-2 rounded-lg hover:bg-red-50 transition-all flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest cursor-pointer" title="Clear All Cells">
+                <button onClick={handleReset} className="text-slate-400 hover:text-red-500 p-2 rounded-lg hover:bg-red-50 transition-all flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] cursor-pointer" title="Clear All Cells">
                   <RotateCcw size={14} /> Clear
                 </button>
             </div>
@@ -209,11 +276,11 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
                           onDragStart={() => handleDragStart('column', colIndex)}
                           onDragOver={(e) => e.preventDefault()}
                           onDrop={() => handleDrop(colIndex)}
-                          className={`flex flex-col h-[84px] bg-slate-900 p-4 rounded-3xl shadow-xl border border-slate-800 relative cursor-grab active:cursor-grabbing transition-transform hover:scale-[1.02] ${getHighlightClass('phase')}`}
+                          className={`flex flex-col h-[84px] bg-[#0c1421] p-4 rounded-3xl shadow-xl border border-white/5 relative cursor-grab active:cursor-grabbing transition-transform hover:scale-[1.02] ${getHighlightClass('phase')}`}
                         >
-                            <div className="absolute -left-2 -top-2 w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-white font-black text-xs border-2 border-slate-50 shadow-lg z-10">{colIndex + 1}</div>
+                            <div className="absolute -left-2 -top-2 w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-white font-black text-xs border-2 border-white shadow-lg z-10">{colIndex + 1}</div>
                             <input type="text" value={column.phase} onChange={(e) => updatePhaseName(column.id, e.target.value)} className="w-full bg-transparent border-none focus:ring-0 text-white font-black text-center text-base" placeholder="Phase" onMouseDown={(e) => e.stopPropagation()} />
-                            <div className="mt-auto w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                            <div className="mt-auto w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
                                 <div className="h-full bg-indigo-500 transition-all duration-500" style={{ width: `${(layers.filter(l => column[l]).length / layers.length) * 100}%` }}></div>
                             </div>
                         </div>
@@ -271,22 +338,41 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
       {showScenarioBrief && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg p-10 relative animate-in zoom-in-95">
-                <button onClick={() => setShowScenarioBrief(false)} className="absolute top-6 right-6 text-slate-300 hover:text-slate-900 transition-colors cursor-pointer"><X size={32}/></button>
+                <button onClick={() => setShowScenarioBrief(false)} className="absolute top-6 right-6 text-slate-300 hover:text-slate-900 transition-colors cursor-pointer z-10"><X size={32}/></button>
                 <div className="flex items-center gap-4 mb-8">
                     <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 shadow-inner"><Info size={28}/></div>
                     <h2 className="text-2xl font-black text-slate-900 tracking-tight">Mission Briefing</h2>
                 </div>
                 <div className="space-y-6">
-                   <div>
-                      <h4 className="text-[10px] font-black uppercase text-indigo-600 tracking-widest mb-2">Operation</h4>
-                      <p className="text-xl font-black text-slate-900 leading-none">{scenario.title}</p>
+                   <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 shadow-inner">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">Operation</h4>
+                        <Pencil size={12} className="text-slate-300" />
+                      </div>
+                      <input 
+                        type="text" 
+                        value={editScenarioTitle} 
+                        onChange={(e) => setEditScenarioTitle(e.target.value)}
+                        className="w-full bg-transparent border-none focus:ring-0 text-xl font-black text-slate-900 leading-none p-0"
+                        placeholder="Untitled Operation"
+                      />
                    </div>
-                   <div>
-                      <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-2">Intelligence Brief</h4>
-                      <p className="text-slate-600 leading-relaxed font-medium">{scenario.context}</p>
+                   <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 shadow-inner">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Intelligence Brief</h4>
+                        <Pencil size={12} className="text-slate-300" />
+                      </div>
+                      <textarea 
+                        value={editScenarioContext} 
+                        onChange={(e) => setEditScenarioContext(e.target.value)}
+                        className="w-full bg-transparent border-none focus:ring-0 text-slate-600 leading-relaxed font-medium min-h-[120px] resize-none p-0 outline-none"
+                        placeholder="Define the intelligence parameters..."
+                      />
                    </div>
                 </div>
-                <button onClick={() => setShowScenarioBrief(false)} className="w-full mt-10 bg-slate-900 text-white py-4 rounded-2xl font-black shadow-lg hover:bg-indigo-600 transition-colors cursor-pointer">Resume Operation</button>
+                <button onClick={handleUpdateBrief} className="w-full mt-10 bg-[#0c1421] text-white py-5 rounded-2xl font-black shadow-xl hover:bg-indigo-600 transition-all active:scale-95 cursor-pointer uppercase tracking-widest text-sm">
+                  Update & Resume Operation
+                </button>
             </div>
         </div>
       )}

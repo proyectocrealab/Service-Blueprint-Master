@@ -25,9 +25,14 @@ export interface Scenario {
 export interface SavedBlueprint {
   id: string;
   name: string;
+  studentName: string;
   scenario: Scenario;
   blueprint: BlueprintColumn[];
   lastModified: number;
+  isLibrary?: boolean; // Flag to indicate if this mission is pinned to the library
+  status?: 'draft' | 'completed';
+  score?: number;
+  completionRate?: number; // 0-100 percentage of non-empty cells
 }
 
 export interface GradingResult {
@@ -40,18 +45,18 @@ export interface GradingResult {
   isRemediation?: boolean;
 }
 
-// Added ChatMessage interface to support MentorChat component
-export interface ChatMessage {
-  id: string;
-  sender: 'ai' | 'user';
-  text: string;
-}
-
 export enum AppStage {
   ONBOARDING,
   SCENARIO_SELECTION,
   BLUEPRINT_BUILDER,
   ANALYSIS_MODE,
   SUBMISSION,
-  RESULTS
+  RESULTS,
+  PROJECT_ARCHIVE
+}
+
+export interface ChatMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  text: string;
 }

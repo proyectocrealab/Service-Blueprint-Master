@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { BlueprintColumn, GradingResult, Scenario } from "../types";
 
@@ -22,6 +23,8 @@ export const gradeBlueprint = async (
   previousResult?: GradingResult
 ): Promise<GradingResult> => {
   try {
+    // Initializing Gemini client with named parameter apiKey as per guidelines.
+    // Use process.env.API_KEY directly which is injected automatically.
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const filteredBlueprint = blueprint.filter(c => !isColumnBlank(c));
 
@@ -78,8 +81,9 @@ export const gradeBlueprint = async (
       }
     `;
 
+    // Using gemini-3-pro-preview for complex reasoning task (grading blueprints)
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview', 
+      model: 'gemini-3-pro-preview', 
       contents: prompt,
       config: {
         temperature: 0.0,
@@ -116,7 +120,8 @@ export const gradeBlueprint = async (
 };
 
 /**
- * Provides mentor advice based on chat history and current blueprint state.
+ * Provides conversational advice to the student based on their current blueprint and chat history.
+ * Each call creates a fresh AI instance to respect the latest user-provided API key.
  */
 export const getMentorAdvice = async (
   history: { role: 'user' | 'model'; parts: { text: string }[] }[],
@@ -124,36 +129,42 @@ export const getMentorAdvice = async (
   scenario: Scenario
 ): Promise<string> => {
   try {
+    // Create fresh instance to use latest API key from env
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    
+    const filteredBlueprint = blueprint.filter(c => !isColumnBlank(c));
+
     const systemInstruction = `
-      You are a Service Design Mentor. Help the student build a Service Blueprint for the following scenario.
-      Scenario: ${scenario.title}
+      You are Professor AI, a world-class Service Design Mentor. 
+      The student is working on a Service Blueprint for the scenario: "${scenario.title}".
       Context: ${scenario.context}
       
-      Current Blueprint State (Filtered to non-blank):
-      ${JSON.stringify(blueprint.filter(c => !isColumnBlank(c)), null, 2)}
+      Current Blueprint State (Non-blank phases):
+      ${JSON.stringify(filteredBlueprint, null, 2)}
       
-      Provide helpful, encouraging, and pedagogically sound advice. 
-      Focus on concepts like physical evidence, frontstage/backstage alignment, and identifying friction points.
-      Keep responses concise and professional.
+      Guidelines:
+      1. Be encouraging but rigorous.
+      2. Use Service Design terminology (Frontstage, Backstage, Support Processes, Physical Evidence).
+      3. Help the student identify missing connections between layers.
+      4. Provide specific examples relevant to "${scenario.title}".
+      5. Keep responses concise and conversational.
     `;
 
+    // Using gemini-3-flash-preview for quick conversational Q&A as per guidelines for Basic Text Tasks
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: history,
       config: {
-        systemInstruction: systemInstruction,
+        systemInstruction,
         temperature: 0.7,
-      },
+      }
     });
 
-    return response.text || "I'm sorry, I'm having trouble thinking right now. Please try again.";
+    return response.text || "I'm sorry, I'm having trouble thinking right now. Could you rephrase your question?";
   } catch (error: any) {
-    console.error("Mentor Chat Error Detail:", error);
+    console.error("Mentor Service Error:", error);
     if (error?.message?.includes('429') || error?.message?.includes('quota')) {
-      return "Rate limit exceeded (429). Please wait a minute before asking for more advice, or switch to a project with higher quota.";
+      return "I'm a bit overwhelmed with students right now (Rate limit reached). Please wait a moment before asking again.";
     }
-    return "The Professor is currently unavailable. Please check your connection and API key settings.";
+    return "I'm having a technical glitch. Please try again in a few seconds.";
   }
 };
