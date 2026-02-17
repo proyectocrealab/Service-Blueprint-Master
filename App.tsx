@@ -5,7 +5,7 @@ import { SCENARIOS, EXAMPLE_BLUEPRINT, TUTORIAL_SCENARIO, LAYER_INFO } from './c
 import { gradeBlueprint } from './services/geminiService';
 import { getSavedBlueprints, saveBlueprint, deleteBlueprint, exportAllData, importDataFromFile } from './services/storageService';
 import BlueprintBuilder from './components/BlueprintBuilder';
-import { ArrowRight, CheckCircle, Play, Clock, Loader2, X, PenTool, Sparkles, PlayCircle, Pencil, LayoutGrid, User, BookOpen, Download, Check, AlertCircle, Link, ShieldCheck, Zap, Database, Activity, Eye, Info, Home, ChevronRight, Save, History, Trash2, Upload, FileJson, Bookmark, Search, Filter, Trophy, Star, RefreshCw, ExternalLink } from 'lucide-react';
+import { ArrowRight, CheckCircle, Play, Clock, Loader2, X, PenTool, Sparkles, LayoutGrid, User, BookOpen, Download, Check, AlertCircle, Database, Activity, Info, ChevronRight, Save, Trash2, Upload, FileJson, Bookmark, Search, Filter, Trophy, Pencil, Zap } from 'lucide-react';
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 
@@ -71,6 +71,9 @@ const App: React.FC = () => {
       if (window.aistudio) {
         const hasKey = await window.aistudio.hasSelectedApiKey();
         setIsConnected(hasKey);
+      } else {
+        // If not in AI Studio (e.g. Netlify), assume connected if API_KEY env is set
+        setIsConnected(!!process.env.API_KEY);
       }
     };
     checkConnection();
@@ -112,7 +115,6 @@ const App: React.FC = () => {
       } catch (err) {
         console.error("Auto-save failed:", err);
         setAutoSaveStatus('error');
-        alert("Mission Critical: Auto-save failed. Local storage might be full. Please manually download a backup from Mission Control to prevent data loss.");
       }
     };
 
@@ -133,6 +135,8 @@ const App: React.FC = () => {
     if (window.aistudio) {
       await window.aistudio.openSelectKey();
       setIsConnected(true);
+    } else {
+      alert("System Note: Security Uplink is managed via environment variables in this deployment.");
     }
   };
 
@@ -217,6 +221,7 @@ const App: React.FC = () => {
   };
 
   const handleDeleteMission = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
     e.stopPropagation();
     if (window.confirm("Permanent erasure of this mission log? This cannot be undone.")) {
       deleteBlueprint(id);
@@ -311,6 +316,12 @@ const App: React.FC = () => {
 
   const handleSubmission = async () => {
     if (!selectedScenario) return;
+
+    // VALIDATION: Ensure student name is present before analysis
+    if (!studentName.trim()) {
+      alert("Protocol Error: Student Name (Lead Designer) must be defined before strategic analysis can proceed.");
+      return;
+    }
 
     // Auto-save progress before submission to ensure archive is updated
     const autoName = activeSaveId 
@@ -530,7 +541,7 @@ const App: React.FC = () => {
                       <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-bl-full pointer-events-none"></div>
                       <PenTool className="text-indigo-400 mb-8" size={56} />
                       <h3 className="text-4xl font-black text-white mb-4 tracking-tighter">Initialize New Mission</h3>
-                      <p className="text-slate-400 mb-10 text-lg leading-relaxed max-w-md">Define custom parameters for a unique service architecture simulation.</p>
+                      <p className="text-slate-400 mb-10 text-lg leading-relaxed max-w-md">Define custom parameters for a unique Mission architecture simulation.</p>
                       <button onClick={() => setShowCustomModal(true)} className="bg-indigo-600 text-white px-10 py-4 rounded-2xl font-black shadow-2xl hover:bg-indigo-500 active:scale-95 text-lg transition-all">Start Protocol</button>
                   </div>
 
@@ -644,7 +655,14 @@ const App: React.FC = () => {
                               <div className={`w-1.5 h-1.5 rounded-full ${mission.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-500'}`}></div>
                               {mission.status === 'completed' ? 'Analyzed' : 'In Progress'}
                             </div>
-                            <button onClick={(e) => handleDeleteMission(e, mission.id)} className="text-slate-200 hover:text-red-500 transition-colors p-2 z-10"><Trash2 size={18} /></button>
+                            <button 
+                                type="button"
+                                onClick={(e) => handleDeleteMission(e, mission.id)} 
+                                className="text-slate-300 hover:text-red-500 transition-all p-2 z-20 relative bg-white/50 rounded-lg hover:bg-white shadow-sm hover:scale-110 active:scale-95"
+                                title="Delete Mission Log"
+                            >
+                                <Trash2 size={18} />
+                            </button>
                           </div>
                           
                           <div className="mb-8">
@@ -702,6 +720,8 @@ const App: React.FC = () => {
               onSave={handleSaveCurrent}
               autoSaveStatus={autoSaveStatus}
               lastAutoSaveTime={lastAutoSaveTime}
+              studentName={studentName}
+              onUpdateStudentName={setStudentName}
             />
           </div>
         )}
@@ -723,7 +743,10 @@ const App: React.FC = () => {
                               <span className="text-8xl font-black">{gradingResult.letterGrade}</span>
                           </div>
                           <div className="flex-1 text-center md:text-left">
-                              <h2 className="text-6xl font-black text-slate-900 mb-6 tracking-tighter">Score: {gradingResult.score} XP</h2>
+                              <h2 className="text-6xl font-black text-slate-900 mb-2 tracking-tighter">Score: {gradingResult.score} XP</h2>
+                              <div className="flex items-center gap-2 mb-6">
+                                <span className="px-3 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-widest rounded-lg border border-indigo-100">STUDENT: {studentName || 'UNKNOWN AGENT'}</span>
+                              </div>
                               <p className="text-slate-500 text-2xl italic leading-relaxed">"{gradingResult.feedbackSummary}"</p>
                           </div>
                       </div>
@@ -746,9 +769,13 @@ const App: React.FC = () => {
                       <div className="mt-20 border-t-4 border-slate-50 pt-20">
                         <div className="flex items-center gap-4 mb-16">
                             <div className="w-16 h-16 bg-slate-900 text-white rounded-[1.5rem] flex items-center justify-center shadow-lg"><Database size={32} /></div>
-                            <div>
+                            <div className="flex-1">
                                 <h3 className="text-5xl font-black text-slate-900 tracking-tighter">Architectural Blueprint</h3>
-                                <p className="text-slate-400 font-bold uppercase text-xs tracking-widest mt-2">TECHNICAL BREAKDOWN OF YOUR SUBMITTED SERVICE MAP</p>
+                                <div className="flex items-center gap-3 mt-2">
+                                  <p className="text-slate-400 font-bold uppercase text-xs tracking-widest">TECHNICAL BREAKDOWN OF SUBMITTED SERVICE MAP</p>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                                  <p className="text-indigo-600 font-black uppercase text-xs tracking-widest">COMPILED BY: {studentName || 'ANONYMOUS'}</p>
+                                </div>
                             </div>
                         </div>
 

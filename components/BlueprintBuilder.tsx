@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { BlueprintColumn, LayerType, Scenario, GradingResult } from '../types';
 import { LAYER_INFO, TUTORIAL_STEPS } from '../constants';
-import { Plus, Trash2, Zap, AlertTriangle, ArrowRight, RotateCcw, X, ClipboardList, Move, Info, Pencil, Cloud, CloudUpload, CloudOff, Save } from 'lucide-react';
+import { Plus, Trash2, Zap, AlertTriangle, ArrowRight, RotateCcw, X, ClipboardList, Move, Info, Pencil, Cloud, CloudUpload, CloudOff, Save, Home, User } from 'lucide-react';
 import TutorialOverlay from './TutorialOverlay';
 
 interface BlueprintBuilderProps {
@@ -19,6 +19,8 @@ interface BlueprintBuilderProps {
   onSave?: () => void;
   autoSaveStatus?: 'idle' | 'saving' | 'success' | 'error';
   lastAutoSaveTime?: Date | null;
+  studentName?: string;
+  onUpdateStudentName?: (name: string) => void;
 }
 
 type DragType = 'column' | 'cell';
@@ -42,17 +44,21 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
     onUpdateScenario,
     onSave,
     autoSaveStatus = 'idle',
-    lastAutoSaveTime
+    lastAutoSaveTime,
+    studentName = '',
+    onUpdateStudentName
 }) => {
   const [tutorialStep, setTutorialStep] = useState(0);
   const [showFeedback, setShowFeedback] = useState(false);
   const [draggedItem, setDraggedItem] = useState<DraggedItem | null>(null);
+  const [dragOverCell, setDragOverCell] = useState<{ col: number; layer: LayerType } | null>(null);
   const [isOverTrash, setIsOverTrash] = useState(false);
   const [showScenarioBrief, setShowScenarioBrief] = useState(false);
 
   // Editable Scenario States
   const [editScenarioTitle, setEditScenarioTitle] = useState(scenario.title);
   const [editScenarioContext, setEditScenarioContext] = useState(scenario.context);
+  const [editStudentName, setEditStudentName] = useState(studentName);
 
   const [showAnalysisModal, setShowAnalysisModal] = useState(false);
   const [analysisModalData, setAnalysisModalData] = useState<{columnId: string, type: 'painPoints' | 'opportunities'} | null>(null);
@@ -65,6 +71,10 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
     setEditScenarioTitle(scenario.title);
     setEditScenarioContext(scenario.context);
   }, [scenario.id, scenario.title, scenario.context]);
+
+  useEffect(() => {
+    setEditStudentName(studentName);
+  }, [studentName]);
 
   const updateCell = (columnId: string, layer: keyof BlueprintColumn, value: string) => {
     setBlueprint(prev => prev.map(col => col.id === columnId ? { ...col, [layer]: value } : col));
@@ -81,6 +91,9 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
         title: editScenarioTitle,
         context: editScenarioContext
       });
+    }
+    if (onUpdateStudentName) {
+      onUpdateStudentName(editStudentName);
     }
     setShowScenarioBrief(false);
   };
@@ -99,6 +112,7 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
 
   const handleDrop = (targetColIndex: number, targetLayer?: LayerType) => {
     if (!draggedItem) return;
+    
     if (draggedItem.type === 'column' && !targetLayer) {
         if (draggedItem.colIndex === targetColIndex) { setDraggedItem(null); return; }
         const newBlueprint = [...blueprint];
@@ -107,16 +121,29 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
         setBlueprint(newBlueprint);
     } else if (draggedItem.type === 'cell' && targetLayer && draggedItem.layer) {
         const newBlueprint = [...blueprint];
-        const src = { ...newBlueprint[draggedItem.colIndex] };
-        const dest = { ...newBlueprint[targetColIndex] };
-        const temp = src[draggedItem.layer] as string;
-        src[draggedItem.layer] = dest[targetLayer] as string;
-        dest[targetLayer] = temp;
-        newBlueprint[draggedItem.colIndex] = src;
-        newBlueprint[targetColIndex] = dest;
+        
+        if (draggedItem.colIndex === targetColIndex) {
+            // Same column swap: Need to update the single object reference correctly
+            const col = { ...newBlueprint[draggedItem.colIndex] };
+            const temp = col[draggedItem.layer] as string;
+            col[draggedItem.layer] = col[targetLayer] as string;
+            col[targetLayer] = temp;
+            newBlueprint[draggedItem.colIndex] = col;
+        } else {
+            // Different column swap
+            const src = { ...newBlueprint[draggedItem.colIndex] };
+            const dest = { ...newBlueprint[targetColIndex] };
+            const temp = src[draggedItem.layer] as string;
+            src[draggedItem.layer] = dest[targetLayer] as string;
+            dest[targetLayer] = temp;
+            newBlueprint[draggedItem.colIndex] = src;
+            newBlueprint[targetColIndex] = dest;
+        }
+        
         setBlueprint(newBlueprint);
     }
     setDraggedItem(null);
+    setDragOverCell(null);
   };
 
   const handleTrashDrop = (e: React.DragEvent) => {
@@ -131,6 +158,7 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
         setBlueprint(prev => prev.map((col, i) => i === draggedItem.colIndex ? { ...col, [draggedItem.layer!]: '' } : col));
     }
     setDraggedItem(null);
+    setDragOverCell(null);
   };
 
   const openAnalysisModal = (columnId: string, type: 'painPoints' | 'opportunities') => {
@@ -276,7 +304,7 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
                           onDragStart={() => handleDragStart('column', colIndex)}
                           onDragOver={(e) => e.preventDefault()}
                           onDrop={() => handleDrop(colIndex)}
-                          className={`flex flex-col h-[84px] bg-[#0c1421] p-4 rounded-3xl shadow-xl border border-white/5 relative cursor-grab active:cursor-grabbing transition-transform hover:scale-[1.02] ${getHighlightClass('phase')}`}
+                          className={`flex flex-col h-[84px] bg-[#0c1421] p-4 rounded-3xl shadow-xl border border-white/5 relative cursor-grab active:cursor-grabbing transition-transform hover:scale-[1.02] ${getHighlightClass('phase')} ${draggedItem?.type === 'column' && draggedItem.colIndex === colIndex ? 'opacity-40 border-indigo-500 scale-95' : ''}`}
                         >
                             <div className="absolute -left-2 -top-2 w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-white font-black text-xs border-2 border-white shadow-lg z-10">{colIndex + 1}</div>
                             <input type="text" value={column.phase} onChange={(e) => updatePhaseName(column.id, e.target.value)} className="w-full bg-transparent border-none focus:ring-0 text-white font-black text-center text-base" placeholder="Phase" onMouseDown={(e) => e.stopPropagation()} />
@@ -285,19 +313,47 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
                             </div>
                         </div>
 
-                        {layers.map(layer => (
-                            <div key={`${column.id}-${layer}`} className={`h-40 relative group ${getHighlightClass(layer)}`} onDragOver={(e) => e.preventDefault()} onDrop={() => handleDrop(colIndex, layer)}>
-                                <div className={`w-full h-full p-6 text-sm rounded-3xl border-2 shadow-sm transition-all focus-within:ring-4 focus-within:ring-indigo-100 group-hover:border-indigo-400 group-hover:bg-white ${LAYER_INFO[layer].color.split(' ').slice(0, 2).join(' ')} border-opacity-30`}>
-                                    <textarea 
-                                      className="w-full h-full bg-transparent border-none focus:ring-0 outline-none resize-none placeholder:text-slate-400 font-medium text-slate-800" 
-                                      placeholder={`${LAYER_INFO[layer].label}...`} 
-                                      value={column[layer] as string} 
-                                      onChange={(e) => updateCell(column.id, layer, e.target.value)} 
-                                    />
-                                    <div draggable onDragStart={(e) => { e.stopPropagation(); handleDragStart('cell', colIndex, layer); }} className="absolute top-4 right-4 cursor-grab p-1 bg-white/50 text-slate-400 opacity-0 group-hover:opacity-100 rounded hover:text-indigo-500 shadow-sm transition-opacity"><Move size={14} /></div>
+                        {layers.map(layer => {
+                            const isDraggingThis = draggedItem?.type === 'cell' && draggedItem.colIndex === colIndex && draggedItem.layer === layer;
+                            const isDragOverTarget = dragOverCell?.col === colIndex && dragOverCell?.layer === layer;
+                            
+                            return (
+                                <div 
+                                    key={`${column.id}-${layer}`} 
+                                    className={`h-40 relative group ${getHighlightClass(layer)} ${isDraggingThis ? 'opacity-30 grayscale' : ''} ${isDragOverTarget ? 'scale-105 z-10' : ''}`} 
+                                    onDragOver={(e) => {
+                                        e.preventDefault();
+                                        if (draggedItem?.type === 'cell') setDragOverCell({ col: colIndex, layer });
+                                    }} 
+                                    onDragLeave={() => setDragOverCell(null)}
+                                    onDrop={() => handleDrop(colIndex, layer)}
+                                >
+                                    <div className={`w-full h-full p-6 text-sm rounded-3xl border-2 shadow-sm transition-all focus-within:ring-4 focus-within:ring-indigo-100 group-hover:border-indigo-400 group-hover:bg-white ${LAYER_INFO[layer].color.split(' ').slice(0, 2).join(' ')} border-opacity-30 ${isDragOverTarget ? 'border-indigo-600 bg-indigo-50 ring-4 ring-indigo-200' : ''}`}>
+                                        <textarea 
+                                          className="w-full h-full bg-transparent border-none focus:ring-0 outline-none resize-none placeholder:text-slate-400 font-medium text-slate-800" 
+                                          placeholder={`${LAYER_INFO[layer].label}...`} 
+                                          value={column[layer] as string} 
+                                          onChange={(e) => updateCell(column.id, layer, e.target.value)} 
+                                        />
+                                        <div 
+                                            draggable={!isTutorial} 
+                                            onDragStart={(e) => { 
+                                                e.stopPropagation(); 
+                                                handleDragStart('cell', colIndex, layer); 
+                                            }} 
+                                            className="absolute top-4 right-4 cursor-grab p-1 bg-white/50 text-slate-400 opacity-0 group-hover:opacity-100 rounded hover:text-indigo-500 shadow-sm transition-opacity"
+                                        >
+                                            <Move size={14} />
+                                        </div>
+                                    </div>
+                                    {isDragOverTarget && draggedItem?.type === 'cell' && (
+                                        <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-40">
+                                            <div className="bg-indigo-600 text-white px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg">Swap</div>
+                                        </div>
+                                    )}
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
 
                         <div className={`min-h-[160px] bg-white rounded-3xl border-2 border-slate-100 p-4 shadow-sm flex flex-col gap-4 transition-all hover:shadow-md ${getHighlightClass('analysis')}`}>
                             <div className="flex items-center justify-between">
@@ -346,7 +402,24 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
                 <div className="space-y-6">
                    <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 shadow-inner">
                       <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">Operation</h4>
+                        <h4 className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">Lead Designer</h4>
+                        <Pencil size={12} className="text-slate-300" />
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <User size={16} className="text-slate-400" />
+                        <input 
+                          type="text" 
+                          value={editStudentName} 
+                          onChange={(e) => setEditStudentName(e.target.value)}
+                          className="w-full bg-transparent border-none focus:ring-0 text-xl font-black text-slate-900 leading-none p-0"
+                          placeholder="Agent Identity"
+                        />
+                      </div>
+                   </div>
+
+                   <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 shadow-inner">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">Operation Codename</h4>
                         <Pencil size={12} className="text-slate-300" />
                       </div>
                       <input 
@@ -357,6 +430,7 @@ const BlueprintBuilder: React.FC<BlueprintBuilderProps> = ({
                         placeholder="Untitled Operation"
                       />
                    </div>
+
                    <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 shadow-inner">
                       <div className="flex items-center justify-between mb-2">
                         <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Intelligence Brief</h4>
